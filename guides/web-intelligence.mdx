@@ -1,0 +1,358 @@
+---
+title: "Web Search, Scraping, and Crawling with Piramyd"
+sidebarTitle: "Web Intelligence"
+description: "Piramyd bundles SIRS (multi-engine web search) and CROWD (scraping, crawling, extraction) as first-class API endpoints — no separate services needed."
+---
+
+Piramyd ships two self-hosted web intelligence services alongside its inference endpoints, and both are accessible with your existing API key. **SIRS** (powered by SearXNG) handles multi-engine web search. **CROWD** (powered by Firecrawl) handles single-URL scraping, full-site crawling, structured extraction, and more. You don't need separate accounts, separate SDKs, or separate billing — one key unlocks everything.
+
+## SIRS — Web Search
+
+### `POST /v1/search`
+
+Search the web across multiple engines and receive ranked results with snippets, source engines, relevance scores, and publication dates.
+
+**Request fields**
+
+| Field | Type | Default | Required | Description |
+|-------|------|---------|----------|-------------|
+| `text_query` | string | — | Yes | The search query |
+| `limit` | integer | `5` | No | Max results to return (1–20) |
+| `include_content` | boolean | `false` | No | Concurrently scrape each result via CROWD and attach full page markdown |
+| `language` | string | `"auto"` | No | BCP-47 language code (`"en"`, `"pt"`) or `"auto"` |
+| `categories` | string | `"general"` | No | `general`, `news`, `science`, `it`, `social media`, `videos`, `music`, `files`, `images`, `map` |
+| `timeout_seconds` | integer | `30` | No | Request timeout (5–60 seconds) |
+
+**Response shape**
+
+```json
+{
+  "results": [
+    {
+      "title": "AlphaFold 3 — Nature",
+      "url": "https://www.nature.com/articles/s41586-024-07487-w",
+      "content": "Google DeepMind's AlphaFold 3 predicts...",
+      "engines": ["google", "bing"],
+      "score": 0.97,
+      "publishedDate": "2024-05-08T00:00:00Z",
+      "category": "general",
+      "full_content": "# AlphaFold 3\n\n..."
+    }
+  ],
+  "suggestions": ["protein structure prediction"],
+  "corrections": [],
+  "number_of_results": 5,
+  "query": "latest breakthroughs in protein folding 2025"
+}
+```
+
+`full_content` is only present when `include_content: true` was set.
+
+```python
+import httpx
+
+resp = httpx.post(
+    "https://api.piramyd.cloud/v1/search",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    json={
+        "text_query": "latest breakthroughs in protein folding 2025",
+        "limit": 5,
+        "categories": "science",
+    },
+)
+for result in resp.json()["results"]:
+    print(result["title"], result["url"])
+```
+
+<Tip>
+When you need page content alongside search results, use `POST /v1/crowd/search` instead. It runs the search and scrapes each result in a single Firecrawl-native pipeline, which is faster and more reliable than enabling `include_content` on `/v1/search`.
+</Tip>
+
+---
+
+## CROWD — Single URL Scrape
+
+### `POST /v1/scrape`
+
+Fetch and clean the content of a single URL. Returns markdown, HTML, links, or a screenshot depending on the `formats` you request. The legacy alias `POST /v1/fetch` redirects here.
+
+**Request fields**
+
+| Field | Type | Default | Required | Description |
+|-------|------|---------|----------|-------------|
+| `url` | string | — | Yes | The URL to scrape |
+| `formats` | string[] | `["markdown"]` | No | `markdown`, `html`, `links`, `screenshot` |
+| `only_main_content` | boolean | `true` | No | Strip navigation, headers, and footers |
+| `timeout_ms` | integer | `60000` | No | Timeout in milliseconds (1000–300000) |
+
+**Response shape**
+
+```json
+{
+  "success": true,
+  "data": {
+    "markdown": "# What's New in Python 3.13\n\n...",
+    "metadata": {
+      "title": "What's New In Python 3.13",
+      "description": "...",
+      "language": "en",
+      "sourceURL": "https://docs.python.org/3/whatsnew/3.13.html",
+      "statusCode": 200
+    },
+    "html": "<h1>...</h1>",
+    "links": ["https://docs.python.org/3/library/ast.html"],
+    "screenshot": "<base64-string>"
+  }
+}
+```
+
+`html`, `links`, and `screenshot` are only present when included in `formats`.
+
+```python
+resp = httpx.post(
+    "https://api.piramyd.cloud/v1/scrape",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    json={
+        "url": "https://docs.python.org/3/whatsnew/3.13.html",
+        "formats": ["markdown"],
+        "only_main_content": True,
+    },
+)
+print(resp.json()["data"]["markdown"][:500])
+```
+
+---
+
+## CROWD — Search + Scrape
+
+### `POST /v1/crowd/search`
+
+Run a web search and automatically scrape the full content of every result in a single call. This is Firecrawl's native search-and-scrape pipeline — prefer it over `POST /v1/search` with `include_content: true` when you need enriched results.
+
+**Request fields**
+
+| Field | Type | Default | Required | Description |
+|-------|------|---------|----------|-------------|
+| `query` | string | — | Yes | Search query |
+| `limit` | integer | `5` | No | Max results (1–20) |
+| `language` | string | `null` | No | Language filter (`"en"`, `"pt"`, etc.) |
+| `timeout_ms` | integer | `30000` | No | Timeout (5000–60000 ms) |
+| `scrape_options` | object | `{"formats":["markdown"]}` | No | Firecrawl scrape options applied to each result |
+
+```python
+resp = httpx.post(
+    "https://api.piramyd.cloud/v1/crowd/search",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    json={
+        "query": "FastAPI async patterns 2025",
+        "limit": 5,
+        "language": "en",
+        "scrape_options": {"formats": ["markdown"]},
+    },
+)
+for result in resp.json()["results"]:
+    print(result["url"])
+    print(result["markdown"][:300])
+    print("---")
+```
+
+<Tip>
+Use `POST /v1/crowd/search` as your default search entry point when you need content, not just links. It eliminates the extra scrape round trips you'd otherwise have to make.
+</Tip>
+
+---
+
+## CROWD — Crawl a Site
+
+### `POST /v1/crawl` — start an async crawl
+
+Crawl an entire site asynchronously. The endpoint returns a `job_id` immediately; poll for results separately.
+
+**Request fields**
+
+| Field | Type | Default | Required | Description |
+|-------|------|---------|----------|-------------|
+| `url` | string | — | Yes | Root URL to start crawling from |
+| `limit` | integer | `10` | No | Max pages to crawl (1–100) |
+| `max_depth` | integer | `null` | No | Max link depth (1–10) |
+| `formats` | string[] | `["markdown"]` | No | Output formats per page |
+| `only_main_content` | boolean | `true` | No | Strip nav/headers/footers |
+| `exclude_paths` | string[] | `null` | No | URL patterns to skip (e.g. `["/blog/*"]`) |
+| `include_paths` | string[] | `null` | No | Only crawl URLs matching these patterns |
+
+```python
+# Start the crawl
+start_resp = httpx.post(
+    "https://api.piramyd.cloud/v1/crawl",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    json={
+        "url": "https://docs.python.org/3/",
+        "limit": 20,
+        "max_depth": 3,
+        "include_paths": ["/library/*"],
+        "exclude_paths": ["/genindex/*", "/py-modindex/*"],
+    },
+)
+job_id = start_resp.json()["job_id"]
+```
+
+### `GET /v1/crawl/{job_id}` — poll for results
+
+```python
+import time
+
+while True:
+    poll = httpx.get(
+        f"https://api.piramyd.cloud/v1/crawl/{job_id}",
+        headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    ).json()
+
+    status = poll["status"]
+    print(f"Status: {status} — {poll.get('completed', 0)}/{poll.get('total', '?')} pages")
+
+    if status in ("completed", "failed", "cancelled"):
+        break
+    time.sleep(5)
+
+for page in poll.get("data", []):
+    print(page["metadata"]["sourceURL"])
+    print(page["markdown"][:200])
+```
+
+`status` values: `scraping` (in progress), `completed`, `failed`, `cancelled`.
+
+### `DELETE /v1/crawl/{job_id}` — cancel
+
+```python
+httpx.delete(
+    f"https://api.piramyd.cloud/v1/crawl/{job_id}",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+)
+```
+
+---
+
+## CROWD — Map Site URLs
+
+### `POST /v1/map`
+
+Discover all URLs on a site without fetching page content. Much faster than a full crawl — use it to understand site structure and select specific pages before committing to a crawl or extract.
+
+**Request fields**
+
+| Field | Type | Default | Required | Description |
+|-------|------|---------|----------|-------------|
+| `url` | string | — | Yes | Root URL of the site to map |
+| `search` | string | `null` | No | Filter: only return URLs containing this keyword |
+| `limit` | integer | `5000` | No | Max URLs to return (1–5000) |
+
+```python
+resp = httpx.post(
+    "https://api.piramyd.cloud/v1/map",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    json={"url": "https://docs.anthropic.com", "search": "tool-use", "limit": 50},
+)
+data = resp.json()
+print(f"Found {data['total']} URLs")
+for link in data["links"]:
+    print(link)
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "links": [
+    "https://docs.anthropic.com/en/docs/build-with-claude/tool-use",
+    "https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview"
+  ],
+  "total": 2
+}
+```
+
+<Tip>
+Call `POST /v1/map` before `POST /v1/crawl` on large sites. Inspect the URL list, filter it down to the pages you actually need, then pass those specific URLs to `POST /v1/extract` — much more efficient than crawling the entire site.
+</Tip>
+
+---
+
+## CROWD — Structured Extraction
+
+### `POST /v1/extract`
+
+Use an LLM to extract structured data from up to 20 URLs simultaneously. Describe what you want in `prompt` and optionally enforce output shape with a JSON Schema in `schema`. Large extractions may return `status: "processing"` with a `job_id` for polling.
+
+See the [API reference for `/v1/extract`](/api-reference/extract) for the full parameter list and response shape.
+
+---
+
+## CROWD — Generate llms.txt
+
+### `POST /v1/llmstxt`
+
+Generate an [`llms.txt`](https://llmstxt.org/) file for any website — a structured plain-text document of the site's content optimised for injection into an LLM context window.
+
+See the [API reference for `/v1/llmstxt`](/api-reference/llmstxt) for full details.
+
+---
+
+## Usage Patterns
+
+Here are two complete examples that combine multiple CROWD endpoints.
+
+**One-shot enriched search**
+
+```python
+import httpx
+
+BASE = "https://api.piramyd.cloud/v1"
+H = {"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"}
+
+# Search + scrape in one call
+resp = httpx.post(f"{BASE}/crowd/search", headers=H, json={
+    "query": "FastAPI async database patterns 2025",
+    "limit": 5,
+})
+for r in resp.json()["results"]:
+    print(r["url"], r.get("markdown", "")[:200])
+```
+
+**Map → extract structured data**
+
+```python
+import httpx, time
+
+BASE = "https://api.piramyd.cloud/v1"
+H = {"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"}
+
+# 1. Map site to find relevant URLs
+map_resp = httpx.post(f"{BASE}/map", headers=H, json={
+    "url": "https://docs.anthropic.com",
+    "search": "tool-use",
+    "limit": 20,
+})
+urls = map_resp.json()["links"][:5]
+
+# 2. Extract structured data from those URLs
+extract_resp = httpx.post(f"{BASE}/extract", headers=H, json={
+    "urls": urls,
+    "prompt": "Extract all code examples with their language and description",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "examples": {
+                "type": "array",
+                "items": {
+                    "properties": {
+                        "language": {"type": "string"},
+                        "description": {"type": "string"},
+                        "code": {"type": "string"},
+                    }
+                },
+            }
+        },
+    },
+})
+print(extract_resp.json()["data"])
+```

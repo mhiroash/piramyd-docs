@@ -1,0 +1,151 @@
+---
+title: "Authenticate with the Piramyd API"
+sidebarTitle: "Authentication"
+description: "Piramyd uses API keys for inference endpoints and JWTs for account management. Learn how to obtain, use, and rotate your credentials."
+---
+
+Piramyd uses two credential types: **API keys** for all inference and web intelligence endpoints, and **JWTs** for account management operations. You'll use your API key in almost every request — the JWT is only needed when you're programmatically reading or modifying your account. Both credential types are obtained from [dash.piramyd.cloud](https://dash.piramyd.cloud).
+
+<Note>
+  There is no public account-registration API. Accounts are created through the onboarding flow at [dash.piramyd.cloud](https://dash.piramyd.cloud) — not via the API.
+</Note>
+
+---
+
+## API Keys (Inference)
+
+API keys are the primary credential for calling inference and web intelligence endpoints. Every key begins with `sk-`. Create and manage your keys in the **API Keys** section of the [dashboard](https://dash.piramyd.cloud).
+
+### Passing your API key
+
+Include your key in the `Authorization` header on every inference request:
+
+```
+Authorization: Bearer sk-<your-key>
+```
+
+The Anthropic-compatible messages endpoint (`POST /v1/messages`) also accepts the key in the `x-api-key` header — useful if you're migrating an existing Anthropic client without changing its auth configuration:
+
+```
+x-api-key: sk-<your-key>
+```
+
+<CodeGroup>
+  ```python Python
+  import os
+  from openai import OpenAI
+
+  client = OpenAI(
+      api_key=os.environ["PIRAMYD_API_KEY"],  # sk-...
+      base_url="https://api.piramyd.cloud/v1",
+  )
+
+  response = client.chat.completions.create(
+      model="<model-id-from-/v1/models>",
+      messages=[{"role": "user", "content": "Hello!"}],
+  )
+  print(response.choices[0].message.content)
+  ```
+
+  ```bash cURL
+  curl https://api.piramyd.cloud/v1/chat/completions \
+    -H "Authorization: Bearer $PIRAMYD_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "<model-id-from-/v1/models>",
+      "messages": [{"role": "user", "content": "Hello!"}]
+    }'
+  ```
+</CodeGroup>
+
+Store your key in an environment variable (`PIRAMYD_API_KEY`) and never commit it to source control.
+
+---
+
+## JWT (Account Management)
+
+JWTs are required for account management endpoints — reading your profile, refreshing tokens, or deleting your account. You obtain a JWT by posting your credentials to `POST /v1/auth/token`.
+
+### Getting a JWT
+
+<CodeGroup>
+  ```python Python
+  import httpx
+
+  resp = httpx.post(
+      "https://api.piramyd.cloud/v1/auth/token",
+      json={"username": "you@example.com", "password": "your-password"},
+  )
+  resp.raise_for_status()
+  jwt_token = resp.json()["access_token"]
+  ```
+
+  ```bash cURL
+  curl https://api.piramyd.cloud/v1/auth/token \
+    -H "Content-Type: application/json" \
+    -d '{"username": "you@example.com", "password": "your-password"}'
+  ```
+</CodeGroup>
+
+### Using a JWT
+
+Pass the JWT in the `Authorization` header exactly as you would an API key:
+
+```
+Authorization: Bearer <jwt>
+```
+
+```python
+import httpx
+
+headers = {"Authorization": f"Bearer {jwt_token}"}
+me = httpx.get("https://api.piramyd.cloud/v1/auth/me", headers=headers)
+print(me.json())
+```
+
+### Auth Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/v1/auth/token` | Login with username/email + password — returns a JWT |
+| `GET` | `/v1/auth/me` | Retrieve your current user profile |
+| `DELETE` | `/v1/auth/me` | Delete your account |
+| `POST` | `/v1/auth/refresh` | Rotate your refresh token |
+| `POST` | `/v1/auth/logout` | Revoke your refresh token |
+
+---
+
+## Request Tracing
+
+Send an `X-Request-ID` header on any request and Piramyd will echo the same value in the response. Use any stable identifier — a UUID is a good choice. Persist the value in your logs so you can correlate a specific request with error reports or support tickets.
+
+```bash
+curl https://api.piramyd.cloud/v1/chat/completions \
+  -H "Authorization: Bearer $PIRAMYD_API_KEY" \
+  -H "X-Request-ID: req-550e8400-e29b-41d4-a716-446655440000" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "<model-id>", "messages": [{"role": "user", "content": "Hi"}]}'
+```
+
+The response will include:
+
+```
+X-Request-ID: req-550e8400-e29b-41d4-a716-446655440000
+```
+
+---
+
+## Error Codes
+
+<Warning>
+  A `401` response means your API key or JWT is invalid or missing. A `402` response means you've hit a billing limit — add credits or upgrade your plan at [dash.piramyd.cloud](https://dash.piramyd.cloud). A `403` response means the model or feature you're requesting requires a higher subscription tier.
+</Warning>
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| `401 Unauthorized` | Invalid or missing API key / JWT | Verify your key is correct and prefixed with `sk-` |
+| `402 Payment Required` | Billing or credit limit reached | Upgrade your plan or add credits at the dashboard |
+| `403 Forbidden` | Feature or model restricted to a higher tier | Upgrade your subscription tier |
+| `429 Too Many Requests` | Rate limit (RPM) exceeded | Retry with exponential backoff; respect `Retry-After` |
+
+For `429` responses, the API returns a `Retry-After` header indicating how many seconds to wait before retrying. Use exponential backoff with a base of 1 second, a maximum of 8 seconds, and jitter.

@@ -1,0 +1,337 @@
+---
+title: "POST /v1/systemone — System One Decision API"
+sidebarTitle: "System One"
+description: "POST /v1/systemone — typed decision endpoint for Jev models. Accepts a state and typed questions, returns calibrated probabilities and choices in 70–500 ms."
+---
+
+System One is a typed decision API designed for fast, calibrated inference. Instead of generating free-form text, Jev models take a `state` — the context to reason about — and a map of structured `questions`, then return a precise answer for each one: a probability for yes/no questions, a ranked choice with confidence for classification tasks, and a continuous score with a legend for rubric-based evaluation. Responses arrive in 70–500 ms, making System One suitable for real-time routing, triage, scoring, and moderation pipelines. An existing TypeSafe client only needs its base URL changed to `https://api.piramyd.cloud/v1` — the request and response shapes are identical.
+
+<Warning>
+  System One models can **only** be called via `/v1/systemone`. Sending a Jev model ID to `/v1/chat/completions`, `/v1/responses`, or `/v1/messages` returns `400`. Conversely, sending a chat model to `/v1/systemone` also returns `400`.
+</Warning>
+
+## Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/v1/systemone` | Submit a state and questions; receive typed answers |
+| `GET` | `/v1/systemone/models` | List available System One model IDs |
+
+---
+
+## POST /v1/systemone
+
+```
+POST https://api.piramyd.cloud/v1/systemone
+```
+
+**Headers**
+
+| Header | Value |
+|--------|-------|
+| `Authorization` | `Bearer sk-<your-api-key>` |
+| `Content-Type` | `application/json` |
+
+### Request Parameters
+
+<ParamField body="model" type="string" required>
+  The Jev model ID to use. Retrieve valid IDs from `GET /v1/systemone/models` — these do **not** appear in `GET /v1/models`. Examples: `jev-latest`, `jev-1.13.0`.
+
+  Pin a specific version (e.g. `jev-1.13.0`) if you are calibrating decision thresholds on `confidence` scores. Using an alias like `jev-latest` may silently shift your thresholds when the model is updated.
+</ParamField>
+
+<ParamField body="state" type="string | object | array" required>
+  The context the model should analyse when answering the questions. This may be a plain string, a structured object, or an array. Maximum 64k tokens total across the entire request; 32k for the state plus the longest single question.
+</ParamField>
+
+<ParamField body="questions" type="object" required>
+  A map of `question_key → question definition`. Each key becomes the corresponding key in the `answers` response. You may include any mix of question types in a single request.
+
+  <Expandable title="noul question">
+    A yes/no (boolean probability) question.
+
+    <ParamField body="questions.*.type" type="string" required>
+      Must be `"noul"`.
+    </ParamField>
+
+    <ParamField body="questions.*.instructions" type="string" required>
+      Natural-language description of what to evaluate. Example: `"Does this message convey urgency?"`.
+    </ParamField>
+
+    <ParamField body="questions.*.criteria" type="object">
+      Optional rubric with keys `"true"` and `"false"`, each containing a string description of what qualifies as that answer. Omit to let the model interpret the instructions directly.
+    </ParamField>
+  </Expandable>
+
+  <Expandable title="choice question">
+    A classification question with 1–255 named options.
+
+    <ParamField body="questions.*.type" type="string" required>
+      Must be `"choice"`.
+    </ParamField>
+
+    <ParamField body="questions.*.instructions" type="string" required>
+      Natural-language description of the classification task.
+    </ParamField>
+
+    <ParamField body="questions.*.criteria" type="object" required>
+      Map of `option_name → rubric_string | null`. Provide a rubric string to describe when that option applies, or `null` to let the model infer from the option name. Must contain between 1 and 255 keys.
+    </ParamField>
+  </Expandable>
+
+  <Expandable title="score question">
+    A rubric-based scoring question with 2–10 ordered levels.
+
+    <ParamField body="questions.*.type" type="string" required>
+      Must be `"score"`.
+    </ParamField>
+
+    <ParamField body="questions.*.instructions" type="string" required>
+      Natural-language description of what to score.
+    </ParamField>
+
+    <ParamField body="questions.*.criteria" type="array" required>
+      Ordered array of level descriptions, from lowest to highest. Must contain between 2 and 10 elements. The model returns a continuous `score` that can land between levels (e.g. `1.4` on a 3-level scale of 0–2).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Full Request Example
+
+The following example shows a real-world customer support routing scenario using all three question types in a single request.
+
+```json
+{
+  "model": "jev-latest",
+  "state": "Help! My payouts have been failing for 3 days.",
+  "questions": {
+    "is_urgent": {
+      "type": "noul",
+      "instructions": "Does this message convey urgency?"
+    },
+    "department": {
+      "type": "choice",
+      "instructions": "Which team should handle this?",
+      "criteria": {
+        "billing": "Payments, refunds, invoicing issues",
+        "technical": "Bugs, outages, API errors",
+        "sales": null
+      }
+    },
+    "frustration": {
+      "type": "score",
+      "instructions": "How frustrated is the customer?",
+      "criteria": ["Calm", "Frustrated", "Very angry"]
+    }
+  }
+}
+```
+
+```python Python example
+import httpx
+
+headers = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+response = httpx.post(
+    "https://api.piramyd.cloud/v1/systemone",
+    headers=headers,
+    json={
+        "model": "jev-latest",
+        "state": "Help! My payouts have been failing for 3 days.",
+        "questions": {
+            "is_urgent": {
+                "type": "noul",
+                "instructions": "Does this message convey urgency?",
+            },
+            "department": {
+                "type": "choice",
+                "instructions": "Which team should handle this?",
+                "criteria": {
+                    "billing": "Payments, refunds, invoicing issues",
+                    "technical": "Bugs, outages, API errors",
+                    "sales": None,
+                },
+            },
+            "frustration": {
+                "type": "score",
+                "instructions": "How frustrated is the customer?",
+                "criteria": ["Calm", "Frustrated", "Very angry"],
+            },
+        },
+    },
+    timeout=10.0,
+)
+
+data = response.json()
+print(data["answers"]["is_urgent"]["noul"])        # e.g. 0.95
+print(data["answers"]["department"]["choice"])     # e.g. "billing"
+print(data["answers"]["frustration"]["score"])     # e.g. 1.6
+```
+
+### Response Shape
+
+<ResponseField name="model" type="string">
+  The **exact** version of the model that answered (e.g. `jev-1.13.0`), even when you requested an alias like `jev-latest`. Use this value if you need to reproduce a result or audit a decision.
+</ResponseField>
+
+<ResponseField name="answers" type="object">
+  Map of `question_key → answer`. One entry per question submitted.
+
+  <Expandable title="noul answer">
+    <ResponseField name="answers.*.type" type="string">
+      `"noul"`
+    </ResponseField>
+
+    <ResponseField name="answers.*.noul" type="float">
+      Calibrated probability of the answer being `true`, from `0.0` to `1.0`. A value of `0.95` means the model is 95% confident the answer is yes.
+    </ResponseField>
+  </Expandable>
+
+  <Expandable title="choice answer">
+    <ResponseField name="answers.*.type" type="string">
+      `"choice"`
+    </ResponseField>
+
+    <ResponseField name="answers.*.choice" type="string">
+      The selected option key (the most probable option).
+    </ResponseField>
+
+    <ResponseField name="answers.*.probabilities" type="object">
+      Map of every option key to its probability. Values sum to `1.0`.
+    </ResponseField>
+
+    <ResponseField name="answers.*.confidence" type="float">
+      Calibrated confidence in the selected choice, from `0.0` to `1.0`.
+    </ResponseField>
+  </Expandable>
+
+  <Expandable title="score answer">
+    <ResponseField name="answers.*.type" type="string">
+      `"score"`
+    </ResponseField>
+
+    <ResponseField name="answers.*.score" type="float">
+      Continuous score that can land between level indices (e.g. `1.4` on a 3-level scale indexed `0`–`2`).
+    </ResponseField>
+
+    <ResponseField name="answers.*.legend" type="string">
+      Human-readable label for the score, derived from the `criteria` array.
+    </ResponseField>
+
+    <ResponseField name="answers.*.probabilities" type="object">
+      Map of each level label to its probability.
+    </ResponseField>
+
+    <ResponseField name="answers.*.confidence" type="float">
+      Calibrated confidence in the score, from `0.0` to `1.0`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  Token counts for this request.
+
+  <Expandable title="usage fields">
+    <ResponseField name="usage.input_tokens" type="integer">
+      Total input tokens (state + all questions). **This is what you are billed for.**
+    </ResponseField>
+
+    <ResponseField name="usage.output_tokens" type="integer">
+      Output tokens generated. Output tokens are **free** for System One requests.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Example response**
+
+```json
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "is_urgent": {
+      "type": "noul",
+      "noul": 0.95
+    },
+    "department": {
+      "type": "choice",
+      "choice": "billing",
+      "probabilities": {
+        "billing": 0.88,
+        "technical": 0.12,
+        "sales": 0.0
+      },
+      "confidence": 0.81
+    },
+    "frustration": {
+      "type": "score",
+      "score": 1.6,
+      "legend": "Frustrated",
+      "probabilities": {
+        "Calm": 0.05,
+        "Frustrated": 0.65,
+        "Very angry": 0.30
+      },
+      "confidence": 0.72
+    }
+  },
+  "usage": {
+    "input_tokens": 304,
+    "output_tokens": 18
+  }
+}
+```
+
+---
+
+## GET /v1/systemone/models
+
+```
+GET https://api.piramyd.cloud/v1/systemone/models
+```
+
+Returns the list of available System One model IDs that can be used in `POST /v1/systemone`.
+
+<Warning>
+  System One model IDs do **not** appear in `GET /v1/models`. Always use `GET /v1/systemone/models` to discover valid Jev model IDs.
+</Warning>
+
+---
+
+## Limits and Errors
+
+### Token Limits
+
+| Constraint | Limit |
+|------------|-------|
+| Total request (state + all questions) | 64k tokens |
+| State + longest single question | 32k tokens |
+
+If your request exceeds either limit, the API returns `413 context_too_large`. There is **no automatic compaction** for System One — shrink your `state` to fit within the limits.
+
+### Error Reference
+
+| Status | Code | Meaning | Action |
+|--------|------|---------|--------|
+| `413` | `context_too_large` | Request exceeds token limits | Shrink `state` |
+| `422` | — | Invalid question definition | Fix the malformed question |
+| `404` | `model_not_found` | Model ID not found | Use `GET /v1/systemone/models` |
+| `403` | — | Tier restriction | Upgrade your plan |
+| `429` | — | Rate limit exceeded | Retry with exponential backoff; respect `Retry-After` |
+| `503` | — | Provider unavailable | Retry after a delay |
+
+### Feature Restrictions
+
+System One has a deliberately constrained interface. The following features are **not available**:
+
+- Streaming (`stream` parameter is not accepted)
+- Tool/function calling
+- System prompt field
+- Automatic context compaction / `thread_id`
+
+### Billing
+
+You are billed for **input tokens only**. Output tokens for System One requests are always free.
+
+<Warning>
+  Pin the model version (e.g. `jev-1.13.0`) if you are calibrating decision thresholds based on `confidence` scores. Using an alias like `jev-latest` will silently shift thresholds whenever the model is updated to a new version — a different model may return different probability distributions for identical inputs.
+</Warning>

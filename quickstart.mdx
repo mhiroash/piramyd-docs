@@ -1,47 +1,248 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Piramyd in Minutes"
+sidebarTitle: "Quickstart"
+description: "Learn how to make your first Piramyd API call in under five minutes using Python, JavaScript, or any HTTP client."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+Piramyd is a drop-in replacement for the OpenAI SDK — point your existing client at `https://api.piramyd.cloud/v1` and you're routing requests through the gateway immediately. This guide walks you from account creation to your first streaming chat completion in four steps.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Create an account and copy your API key">
+    Go to [dash.piramyd.cloud](https://dash.piramyd.cloud) and complete the onboarding flow. Once inside the dashboard, navigate to **API Keys** and create a new key. Copy it now — you won't be able to see the full value again after leaving that screen.
+
+    Store your key in an environment variable rather than hardcoding it in source code:
 
     ```bash
-    npm install your-package
+    export PIRAMYD_API_KEY="sk-your-key-here"
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+  <Step title="Discover available models">
+    Never hardcode a model ID. The catalog changes as new models are added, and each model exposes metadata — like `supports_tools`, `supports_vision`, `context_length`, and which endpoints it works with — that you should read at runtime to make safe decisions.
 
-    ```bash
-    your-cli start
+    ```bash cURL
+    curl https://api.piramyd.cloud/v1/models \
+      -H "Authorization: Bearer $PIRAMYD_API_KEY"
     ```
+
+    Each model object in the response includes the fields you need to pick the right model for your use case:
+
+    ```json Response shape
+    {
+      "object": "list",
+      "data": [
+        {
+          "id": "claude-opus-4.8",
+          "name": "Claude Opus 4.8",
+          "object": "model",
+          "owned_by": "anthropic",
+          "provider": "anthropic",
+          "type": "chat",
+          "tier": "pro",
+          "endpoints": ["/v1/chat/completions", "/v1/responses"],
+          "context_length": 200000,
+          "max_output_tokens": 16384,
+          "supports_tools": true,
+          "supports_vision": true,
+          "supports_reasoning": false
+        }
+      ]
+    }
+    ```
+
+    | Field | Type | What it tells you |
+    |-------|------|-------------------|
+    | `id` | string | Pass this as the `model` parameter in every request |
+    | `context_length` | int | Maximum input tokens the model accepts |
+    | `max_output_tokens` | int | Maximum tokens the model can generate |
+    | `supports_tools` | bool | Whether the model supports function/tool calling |
+    | `supports_vision` | bool | Whether the model accepts image inputs |
+    | `endpoints` | string[] | Which API endpoints this model is valid for |
+
+    In your code, filter the list programmatically to find a model that matches what you need:
+
+    <CodeGroup>
+      ```python Python
+      import os
+      import httpx
+
+      BASE = "https://api.piramyd.cloud/v1"
+      HEADERS = {"Authorization": f"Bearer {os.environ['PIRAMYD_API_KEY']}"}
+
+      models_resp = httpx.get(f"{BASE}/models", headers=HEADERS)
+      models = models_resp.json()["data"]
+
+      # Pick the first model that supports chat completions
+      chat_models = [
+          m for m in models
+          if "/v1/chat/completions" in m.get("endpoints", [])
+      ]
+
+      model_id = chat_models[0]["id"]
+      print(f"Using model: {model_id}")
+      ```
+
+      ```javascript JavaScript
+      const BASE = "https://api.piramyd.cloud/v1";
+      const HEADERS = { Authorization: `Bearer ${process.env.PIRAMYD_API_KEY}` };
+
+      const res = await fetch(`${BASE}/models`, { headers: HEADERS });
+      const { data: models } = await res.json();
+
+      // Pick the first model that supports chat completions
+      const chatModels = models.filter(m =>
+        m.endpoints?.includes("/v1/chat/completions")
+      );
+
+      const modelId = chatModels[0].id;
+      console.log(`Using model: ${modelId}`);
+      ```
+    </CodeGroup>
   </Step>
+
+  <Step title="Send your first chat completion">
+    Piramyd works as a drop-in replacement for the OpenAI SDK. Set `base_url` (Python) or `baseURL` (JavaScript) to `https://api.piramyd.cloud/v1` and use the `model_id` you discovered in the previous step.
+
+    <CodeGroup>
+      ```python Python
+      import os
+      from openai import OpenAI
+
+      client = OpenAI(
+          api_key=os.environ["PIRAMYD_API_KEY"],
+          base_url="https://api.piramyd.cloud/v1",
+      )
+
+      # Use the model_id discovered from GET /v1/models
+      response = client.chat.completions.create(
+          model=model_id,
+          messages=[
+              {"role": "system", "content": "You are a helpful assistant."},
+              {"role": "user", "content": "Explain quantum computing in simple terms."},
+          ],
+          temperature=0.7,
+          max_tokens=1024,
+      )
+
+      print(response.choices[0].message.content)
+      ```
+
+      ```javascript JavaScript
+      import OpenAI from "openai";
+
+      const client = new OpenAI({
+        apiKey: process.env.PIRAMYD_API_KEY,
+        baseURL: "https://api.piramyd.cloud/v1",
+      });
+
+      // Use the modelId discovered from GET /v1/models
+      const response = await client.chat.completions.create({
+        model: modelId,
+        messages: [
+          { role: "system", content: "You are a helpful assistant." },
+          { role: "user", content: "Explain quantum computing in simple terms." },
+        ],
+        temperature: 0.7,
+        max_tokens: 1024,
+      });
+
+      console.log(response.choices[0].message.content);
+      ```
+    </CodeGroup>
+
+    <Tip>
+      Pass a `thread_id` in your request to enable automatic context compaction for multi-turn conversations. The API will transparently summarize earlier messages when a conversation grows beyond the model's context window — no extra code required on your end.
+
+      ```python
+      response = client.chat.completions.create(
+          model=model_id,
+          messages=[...],
+          extra_body={"thread_id": "my-conversation-123"},
+      )
+      ```
+    </Tip>
+  </Step>
+
+  <Step title="Try streaming">
+    Enable streaming by setting `stream=True` (Python) or `stream: true` (JavaScript). Include `stream_options: { include_usage: true }` to receive token counts in the final chunk — useful for tracking consumption.
+
+    <CodeGroup>
+      ```python Python
+      import os
+      from openai import OpenAI
+
+      client = OpenAI(
+          api_key=os.environ["PIRAMYD_API_KEY"],
+          base_url="https://api.piramyd.cloud/v1",
+      )
+
+      stream = client.chat.completions.create(
+          model=model_id,
+          messages=[
+              {"role": "user", "content": "Write a Python function to sort a list."},
+          ],
+          stream=True,
+          stream_options={"include_usage": True},
+      )
+
+      for chunk in stream:
+          if chunk.choices and chunk.choices[0].delta.content:
+              print(chunk.choices[0].delta.content, end="", flush=True)
+
+          # Final chunk carries usage when include_usage=True
+          if chunk.usage:
+              print(f"\n\nTokens used: {chunk.usage.total_tokens}")
+      ```
+
+      ```javascript JavaScript
+      import OpenAI from "openai";
+
+      const client = new OpenAI({
+        apiKey: process.env.PIRAMYD_API_KEY,
+        baseURL: "https://api.piramyd.cloud/v1",
+      });
+
+      const stream = await client.chat.completions.create({
+        model: modelId,
+        messages: [
+          { role: "user", content: "Write a Python function to sort a list." },
+        ],
+        stream: true,
+        stream_options: { include_usage: true },
+      });
+
+      let totalTokens = 0;
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content ?? "";
+        process.stdout.write(content);
+
+        // Final chunk carries usage when include_usage: true
+        if (chunk.usage) {
+          totalTokens = chunk.usage.total_tokens;
+        }
+      }
+
+      console.log(`\n\nTokens used: ${totalTokens}`);
+      ```
+    </CodeGroup>
+
+    Piramyd streams using Server-Sent Events (SSE). Each `data:` line is a JSON chunk with a `delta.content` fragment. The stream terminates with `data: [DONE]`.
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Next Steps
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+<CardGroup cols={3}>
+  <Card title="Authentication" icon="key" href="/authentication">
+    Learn about API keys, JWTs, request tracing, and error codes.
+  </Card>
+  <Card title="Tool Calling" icon="wrench" href="/guides/tool-calling">
+    Define functions, handle tool call responses, and submit results.
+  </Card>
+  <Card title="Streaming" icon="bolt" href="/guides/streaming">
+    Deep dive into SSE streaming, including tool call streaming and error handling.
+  </Card>
+</CardGroup>

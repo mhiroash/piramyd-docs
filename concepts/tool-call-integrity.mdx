@@ -1,0 +1,51 @@
+---
+title: "Tool Call Integrity: Reliable Streaming Tool Arguments"
+sidebarTitle: "Tool Call Integrity"
+description: "Piramyd automatically buffers, validates, and repairs tool call arguments during streaming so your agent receives complete, valid JSON — even when models are cut off mid-response."
+---
+
+When building agents that call tools over a streaming connection, there is a class of silent failures that can cause hard-to-debug errors: malformed tool call arguments. Piramyd automatically protects you from this entire category of problems, requiring no changes to your client code.
+
+## The Problem
+
+Streaming tool calls present a reliability challenge that the standard OpenAI API does not address:
+
+- **Fragmented delivery** — tool call `arguments` arrive as a sequence of small JSON fragments across multiple SSE chunks. Each individual chunk is not valid JSON on its own.
+- **Mid-argument truncation** — if the model reaches `max_tokens` while writing tool arguments, the stream ends with `finish_reason: "length"`. The final argument string is truncated mid-JSON — for example, a closing `}` or `"` may be missing entirely.
+- **Client-side errors** — without intervention, your application receives the raw fragments, attempts to parse them as JSON, and throws an exception. For write-heavy tools (such as `write_file` with large file content), this is a common failure mode that silently drops work.
+
+Standard SSE clients and OpenAI-compatible SDKs do not repair or complete these fragments automatically.
+
+---
+
+## What Piramyd Does Automatically
+
+Piramyd applies three layers of protection to all streaming tool calls, transparently and without any configuration:
+
+### 1. Buffered Validation
+
+Rather than forwarding each raw `function.arguments` delta to your client as it arrives, Piramyd accumulates all argument fragments internally. The complete, assembled argument string is emitted to your client as a **single validated chunk** once the tool call is fully formed. You never need to concatenate argument fragments in your application.
+
+### 2. Auto-Repair
+
+When the assembled argument string is detected as truncated JSON — for example, an unclosed string literal, a missing array bracket, or a dangling object key — Piramyd deterministically repairs it by closing all open structures. The repaired JSON is what your client receives.
+
+### 3. Transparent Continuation
+
+When a model stops mid-tool-call with `finish_reason: "length"` (indicating it hit `max_tokens` before finishing), Piramyd transparently issues a continuation request to the upstream model and merges the result. From your client's perspective, the stream completes normally with a full `finish_reason: "tool_calls"`.
+
+No client-side changes, retry logic, or error handling is needed for any of these cases.
+
+---
+
+## Result
+
+Your client always receives complete, valid tool call JSON — regardless of how many tokens the model generated, how the arguments arrived in fragments, or whether the model was cut off mid-response.
+
+This means you can safely parse `tool_calls[n].function.arguments` directly with `JSON.parse()` or `json.loads()` without defensive error handling for truncated output.
+
+<Tip>
+  Set `max_tokens` explicitly and size it generously for tool argument payloads. Auto-repair and continuation handle truncation, but they work best when `max_tokens` is large enough for your largest expected tool response. For `write_file`-style tools that may write hundreds or thousands of lines, set `max_tokens` to at least your model's `max_output_tokens` value from `GET /v1/models`.
+</Tip>
+
+For a full guide on structuring tool definitions, handling tool results, and building multi-step agent loops, see the [Tool Calling guide](/guides/tool-calling).

@@ -1,0 +1,183 @@
+---
+title: "POST /v1/search — Multi-Engine Web Search (SIRS)"
+sidebarTitle: "Search"
+description: "POST /v1/search — multi-engine web search via SIRS (SearXNG). Returns ranked results with snippets, sources, score, and optional full page content."
+---
+
+SIRS is Piramyd's self-hosted multi-engine search service, powered by SearXNG at `search.piramyd.cloud`. Submit a natural-language or keyword query and receive ranked results with titles, snippets, source engines, relevance scores, and publication dates. Set `include_content: true` to concurrently scrape each result via CROWD, attaching full page markdown directly to each result object — useful when you want enriched context without a separate scrape call.
+
+<Tip>
+  When you need full page content alongside search results, prefer **`POST /v1/crowd/search`** — it uses Firecrawl's native search-and-scrape pipeline in a single optimized call, rather than performing parallel scrapes after the fact.
+</Tip>
+
+## Endpoint
+
+```
+POST https://api.piramyd.cloud/v1/search
+```
+
+**Authentication:** `Authorization: Bearer sk-<key>`
+
+---
+
+## Request Parameters
+
+<ParamField body="text_query" type="string" required>
+  The search query to run across all configured engines.
+</ParamField>
+
+<ParamField body="limit" type="integer" default="5">
+  Maximum number of results to return. Accepted range: **1–20**.
+</ParamField>
+
+<ParamField body="include_content" type="boolean" default="false">
+  When `true`, each result is enriched with a `full_content` field containing the full page markdown, fetched concurrently via CROWD (Firecrawl).
+</ParamField>
+
+<ParamField body="language" type="string" default="auto">
+  BCP-47 language code to filter results (e.g. `"en"`, `"pt"`) or `"auto"` to let SIRS infer from the query.
+</ParamField>
+
+<ParamField body="categories" type="string" default="general">
+  Search category. One of: `general`, `news`, `science`, `it`, `social media`, `videos`, `music`, `files`, `images`, `map`.
+</ParamField>
+
+<ParamField body="timeout_seconds" type="integer" default="30">
+  Maximum time in seconds to wait for upstream engines to respond. Accepted range: **5–60**.
+</ParamField>
+
+---
+
+## Response
+
+<ResponseField name="results" type="array">
+  Array of ranked search result objects.
+
+  <Expandable title="result object fields">
+    <ResponseField name="results[].title" type="string">
+      Page title as returned by the search engine.
+    </ResponseField>
+    <ResponseField name="results[].url" type="string">
+      Canonical URL of the result.
+    </ResponseField>
+    <ResponseField name="results[].content" type="string">
+      Snippet or description extracted by the search engine.
+    </ResponseField>
+    <ResponseField name="results[].engines" type="string[]">
+      List of engines that returned this result (e.g. `["google", "bing"]`).
+    </ResponseField>
+    <ResponseField name="results[].score" type="number">
+      Relevance score assigned by SIRS (0–1, higher is more relevant).
+    </ResponseField>
+    <ResponseField name="results[].publishedDate" type="string">
+      ISO 8601 publication date, if available.
+    </ResponseField>
+    <ResponseField name="results[].category" type="string">
+      The category this result was retrieved under.
+    </ResponseField>
+    <ResponseField name="results[].full_content" type="string">
+      Full page markdown content fetched via CROWD. **Only present when `include_content: true`.**
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="suggestions" type="string[]">
+  Query suggestions returned by the search engines.
+</ResponseField>
+
+<ResponseField name="corrections" type="string[]">
+  Spelling corrections suggested for the query, if any.
+</ResponseField>
+
+<ResponseField name="number_of_results" type="integer">
+  Number of results returned in this response.
+</ResponseField>
+
+<ResponseField name="query" type="string">
+  The original query string as received by the API.
+</ResponseField>
+
+---
+
+## Code Example
+
+<CodeGroup>
+
+```python Python
+import httpx
+
+PIRAMYD_KEY = "sk-YOUR_KEY"
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": f"Bearer {PIRAMYD_KEY}"}
+
+resp = httpx.post(
+    f"{BASE}/search",
+    headers=HEADERS,
+    json={
+        "text_query": "latest breakthroughs in protein folding 2025",
+        "limit": 5,
+        "include_content": False,
+        "language": "en",
+        "categories": "science",
+        "timeout_seconds": 30,
+    },
+)
+
+data = resp.json()
+print(f"Query: {data['query']}")
+print(f"Results: {data['number_of_results']}")
+
+for result in data["results"]:
+    print(f"\n[{result['score']:.2f}] {result['title']}")
+    print(f"  URL: {result['url']}")
+    print(f"  Engines: {', '.join(result['engines'])}")
+    print(f"  Snippet: {result['content'][:120]}...")
+```
+
+```json Example request body
+{
+  "text_query": "latest breakthroughs in protein folding 2025",
+  "limit": 5,
+  "include_content": false,
+  "language": "en",
+  "categories": "science",
+  "timeout_seconds": 30
+}
+```
+
+```json Example response
+{
+  "results": [
+    {
+      "title": "AlphaFold 3 — Nature",
+      "url": "https://www.nature.com/articles/s41586-024-07487-w",
+      "content": "Google DeepMind's AlphaFold 3 predicts...",
+      "engines": ["google", "bing"],
+      "score": 0.97,
+      "publishedDate": "2024-05-08T00:00:00Z",
+      "category": "science"
+    }
+  ],
+  "suggestions": ["protein structure prediction"],
+  "corrections": [],
+  "number_of_results": 5,
+  "query": "latest breakthroughs in protein folding 2025"
+}
+```
+
+</CodeGroup>
+
+---
+
+## Errors
+
+| Error code | HTTP status | Description |
+|---|---|---|
+| `search_timeout` | 504 | SIRS did not respond within `timeout_seconds`. Retry with backoff or increase the timeout. |
+| `search_upstream_error` | 502 | An upstream search engine returned an error. Retry with backoff. |
+| `search_unavailable` | 502 | The SIRS service is temporarily unavailable. Retry with backoff. |
+| `search_internal_error` | 500 | Unexpected internal error. Retry with backoff. |
+
+<Note>
+  All error responses follow the standard Piramyd error shape: `{ "error": { "message": "...", "type": "...", "code": "..." } }`. Retry `502`, `504`, and `500` with exponential backoff (base 1 s, max 8 s, with jitter). Respect `Retry-After` on `429`.
+</Note>

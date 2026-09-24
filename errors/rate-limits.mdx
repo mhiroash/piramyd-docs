@@ -1,0 +1,74 @@
+---
+title: "Rate Limits and Request Quotas on Piramyd"
+sidebarTitle: "Rate Limits"
+description: "Piramyd rate limits are per API key, measured in requests per minute (RPM). Tokens are unlimited on paid plans. Learn limits by tier and how to handle 429 responses."
+---
+
+Piramyd measures throughput in **requests per minute (RPM)** — not tokens. On every paid plan, token usage is completely unlimited; the only constraint on how much you can generate is how many requests per minute your tier allows. Rate limits are enforced per API key, so if you need to run multiple workloads simultaneously, each key is tracked independently.
+
+## Limits by Tier
+
+| Tier | Price | RPM | Notes |
+|------|-------|-----|-------|
+| Solo (incl. 3-day trial) | $30 / month | 6 RPM | Card required; cancel before day 4 to avoid charges |
+| Growth | $50 / month | 10 RPM | Full model catalog |
+| Scale | $90 / month | 20 RPM | Full catalog + highest-priority routing |
+
+<Note>
+The Solo tier covers both the paid Solo plan and the 3-day trial. You get the same 6 RPM during the trial as you do on the paid Solo plan.
+</Note>
+
+## Extra RPM
+
+If your workload consistently saturates your tier's RPM allowance, you can purchase additional capacity as an add-on:
+
+- **+$15 per 5 RPM** (where offered on your plan)
+
+Manage add-ons and review your current limits at [dash.piramyd.cloud](https://dash.piramyd.cloud).
+
+## 429 Response
+
+When you exceed your RPM limit, Piramyd returns a `429 Too Many Requests` response. Always inspect and honour the `Retry-After` header — it tells you the minimum number of seconds to wait before your next request will succeed.
+
+**Response headers:**
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 3
+```
+
+**Response body:**
+
+```json
+{
+  "error": {
+    "message": "Rate limit reached. Please wait a few seconds and try again.",
+    "type": "rate_limit_error",
+    "code": "rate_limit_exceeded",
+    "param": null
+  }
+}
+```
+
+<Warning>
+Never ignore the `Retry-After` header. Retrying immediately after a `429` — without waiting — wastes a request slot and can lock you into a tight retry loop that delays recovery instead of helping it.
+</Warning>
+
+Implement exponential backoff with jitter for all `429` responses and seed the first wait from `Retry-After`. See the [Retry Strategy](/errors/retry-strategy) guide for a complete implementation example.
+
+## System One Rate Limits
+
+The `/v1/systemone` endpoint (for typed-decision models such as **Jev**) uses the same per-tier RPM as all other inference endpoints. A System One request counts the same as a chat completion request against your key's RPM budget.
+
+System One has one additional quota that is separate from rate limiting:
+
+- **64 k tokens per request** — state plus all questions combined, and a sub-limit of 32 k tokens for the state plus the single longest question.
+- Exceeding this returns `413 context_too_large` with error code `context_too_large`.
+
+<Note>
+`413 context_too_large` is **not** a rate limit. It means your individual request is too large. Fix it by reducing the length of your `state` field — there is no automatic compaction for System One requests.
+</Note>
+
+<Tip>
+Monitor your live RPM usage and billing status from the dashboard at [dash.piramyd.cloud](https://dash.piramyd.cloud). The dashboard also shows your current plan and available add-ons.
+</Tip>

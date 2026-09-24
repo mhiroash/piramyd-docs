@@ -1,0 +1,148 @@
+---
+title: "Retry Strategy and Resilience Patterns for Piramyd"
+sidebarTitle: "Retry Strategy"
+description: "Learn which Piramyd errors to retry and how to implement exponential backoff with jitter for 429, 502, 503, and 504 responses."
+---
+
+Not every error from Piramyd warrants a retry — some indicate a problem with your request that no amount of waiting will fix, while others are transient conditions that resolve on their own within seconds. Build your integration to distinguish between the two from the start, and you will avoid wasting quota on futile retries while recovering automatically from the errors that are genuinely recoverable.
+
+## Which Errors to Retry
+
+### Retry these status codes
+
+| Status | Reason | Strategy |
+|--------|--------|----------|
+| `429` | Rate limit exceeded | Exponential backoff; always honour `Retry-After` |
+| `500` | Internal server error | Exponential backoff |
+| `502` | Upstream provider temporarily unavailable | Exponential backoff |
+| `503` | Service maintenance | Wait for the duration in `Retry-After`, then retry |
+| `504` | Request timeout | Exponential backoff |
+
+### Do NOT retry these status codes
+
+Fix the underlying cause before attempting another request.
+
+| Status | Reason | Fix |
+|--------|--------|-----|
+| `400` | Invalid request payload | Correct the request parameters |
+| `401` | Invalid API key or JWT | Check and rotate your credentials |
+| `402` | Billing issue | Resolve billing at [dash.piramyd.cloud](https://dash.piramyd.cloud) |
+| `403` | Permission denied / tier restriction | Upgrade your plan or use an accessible model |
+| `404` | Model or resource not found | Verify the model ID via `GET /v1/models` |
+
+### Special case: `context_length_exceeded`
+
+You do not need to handle this one manually. When a `context_length_exceeded` error occurs and your request includes a `thread_id` (or `conversation_id`), the API **automatically retries once** after compacting older messages into a structured summary. The retry is transparent — you receive a successful response as if the error never happened. Without a `thread_id`, reduce your message history and retry yourself.
+
+## Exponential Backoff Strategy
+
+Use the following parameters for all retryable errors:
+
+- **Base delay:** 1 second
+- **Maximum delay:** 8 seconds
+- **Jitter:** add a random fraction of the current delay to avoid thundering-herd collisions
+- **`Retry-After` override:** on `429` responses, use the value from the `Retry-After` header as the minimum wait, then apply your backoff on top for subsequent attempts
+
+The Python example below shows a manual retry loop that covers all retryable status codes and honours `Retry-After`:
+
+```python
+import time
+import random
+import httpx
+
+PIRAMYD_KEY = "sk-YOUR_KEY"
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {
+    "Authorization": f"Bearer {PIRAMYD_KEY}",
+    "X-Request-ID": "my-app-req-001",  # optional but recommended
+}
+
+RETRYABLE = {429, 500, 502, 503, 504}
+MAX_ATTEMPTS = 5
+BASE_DELAY = 1.0   # seconds
+MAX_DELAY  = 8.0   # seconds
+
+def chat(payload: dict) -> dict:
+    delay = BASE_DELAY
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        response = httpx.post(
+            f"{BASE}/chat/completions",
+            headers=HEADERS,
+            json=payload,
+            timeout=60,
+        )
+        if response.status_code == 200:
+            return response.json()
+
+        if response.status_code not in RETRYABLE or attempt == MAX_ATTEMPTS:
+            response.raise_for_status()
+
+        # Honour Retry-After on 429 / 503
+        retry_after = response.headers.get("Retry-After")
+        if retry_after is not None:
+            wait = float(retry_after)
+        else:
+            # Exponential backoff with full jitter
+            wait = min(delay * (2 ** (attempt - 1)), MAX_DELAY)
+            wait += random.uniform(0, wait * 0.1)
+
+        print(f"Attempt {attempt} failed ({response.status_code}). "
+              f"Retrying in {wait:.1f}s …")
+        time.sleep(wait)
+
+    raise RuntimeError("Exhausted retry attempts")
+```
+
+<Note>
+If you prefer a library approach, [tenacity](https://tenacity.readthedocs.io/) integrates cleanly. Wrap the `httpx.post` call with `@retry(wait=wait_exponential(min=1, max=8), stop=stop_after_attempt(5))` and add a `before_sleep` hook to inspect `Retry-After`.
+</Note>
+
+## Request Tracing
+
+Attach a unique `X-Request-ID` header to every request. Piramyd echoes the value back in the response headers, and streaming errors include it in the `request_id` field of the error payload. Persisting this ID in your logs dramatically reduces time-to-resolution when you open a support ticket.
+
+```python
+import uuid
+import httpx
+
+request_id = str(uuid.uuid4())
+
+response = httpx.post(
+    "https://api.piramyd.cloud/v1/chat/completions",
+    headers={
+        "Authorization": "Bearer sk-YOUR_KEY",
+        "X-Request-ID": request_id,
+    },
+    json={
+        "model": "claude-opus-4.8",
+        "messages": [{"role": "user", "content": "Hello!"}],
+    },
+)
+
+if not response.is_success:
+    print(f"Request {request_id} failed: {response.status_code}")
+    print(response.json())
+```
+
+Generate a fresh ID per request — not per session. UUIDs work well, but any string that is unique within your system is fine.
+
+## Upstream Errors
+
+A `502` response means an upstream inference provider returned an error or became temporarily unreachable. Piramyd normalises all upstream errors into the same [standard error shape](/errors/error-reference#error-response-shape-non-streaming) before returning them to you — you do not need to handle provider-specific error formats.
+
+Apply the same exponential backoff logic you use for other `5xx` responses. Upstream outages are typically short-lived, and a request that fails immediately often succeeds within a few seconds.
+
+```json
+{
+  "error": {
+    "message": "Upstream provider temporarily unavailable. Please retry.",
+    "type": "upstream_error",
+    "code": "upstream_unavailable",
+    "param": null
+  }
+}
+```
+
+<Tip>
+Log the `X-Request-ID` (or the `request_id` field from streaming errors) for **every** failed request before your retry loop moves on. Having that ID ready when you contact support means issues get diagnosed in minutes rather than hours.
+</Tip>

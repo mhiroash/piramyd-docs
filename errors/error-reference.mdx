@@ -1,0 +1,96 @@
+---
+title: "Piramyd API Error Codes and Response Shapes"
+sidebarTitle: "Error Reference"
+description: "Reference for every Piramyd HTTP status code and error response format, including non-streaming and streaming error shapes."
+---
+
+When something goes wrong, Piramyd always returns a consistent JSON error shape regardless of which endpoint you called, which model you targeted, or whether the fault originated in Piramyd itself or an upstream provider. Familiarise yourself with these shapes and status codes once, and your error-handling code will work uniformly across the entire API.
+
+## Error Response Shape (non-streaming)
+
+Every non-streaming error is a JSON object with a single top-level `error` key. The four fields below are always present.
+
+```json
+{
+  "error": {
+    "message": "Rate limit reached. Please wait a few seconds and try again.",
+    "type": "rate_limit_error",
+    "code": "rate_limit_exceeded",
+    "param": null
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Human-readable description of what went wrong |
+| `type` | string | Machine-readable error category (e.g. `rate_limit_error`, `invalid_request_error`) |
+| `code` | string | Specific error code within that category |
+| `param` | string \| null | The request parameter responsible for the error, when applicable |
+
+## Streaming Error Shape
+
+Errors that occur mid-stream — after the HTTP connection has already opened and SSE chunks have started flowing — arrive as a `data` event rather than an HTTP error status. Parse every `data:` line for an `error` key and surface it to your users immediately.
+
+```
+data: {"error": {"message": "...", "type": "...", "code": "...", "request_id": "..."}}
+```
+
+<Note>
+Streaming errors include a `request_id` field that non-streaming errors do not. Always log this value — it is the fastest way to get support on a specific failed request.
+</Note>
+
+## HTTP Status Code Reference
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| `400` | Invalid request payload | Fix the request (bad parameters, wrong endpoint for the model, unsupported feature) |
+| `401` | Invalid API key or JWT | Fix your credentials — check that the key is correct and not revoked |
+| `402` | Billing or credit limit reached | Add credits or upgrade your plan at [dash.piramyd.cloud](https://dash.piramyd.cloud) |
+| `403` | Permission denied / tier restriction | Your current plan does not include access to this model or feature |
+| `404` | Model or resource not found | Verify the model ID with `GET /v1/models`; do not hardcode model IDs |
+| `429` | Rate limit exceeded (RPM) | Retry with exponential backoff; honour the `Retry-After` header |
+| `500` | Internal server error | Retry with exponential backoff |
+| `502` | Upstream provider unavailable | Retry with exponential backoff |
+| `503` | Service maintenance | Retry after the delay indicated in the `Retry-After` header |
+| `504` | Request timeout | Retry with exponential backoff |
+
+<Warning>
+`402` and `403` do **not** indicate that you have exhausted a free-tier USD budget — there is no free forever tier. A `402` means your account has a billing issue; a `403` means your subscription plan does not include access to the requested model or feature. Resolve both at [dash.piramyd.cloud](https://dash.piramyd.cloud).
+</Warning>
+
+## Common Error Codes
+
+### `rate_limit_exceeded` — 429
+
+Your API key has exceeded its requests-per-minute (RPM) allowance. Tokens are unlimited on paid plans; RPM is the only throughput constraint. Retry with exponential backoff and always honour the `Retry-After` header included in the response.
+
+### `context_length_exceeded`
+
+The conversation history is too long for the model's context window. If you include a `thread_id` (or `conversation_id`) in your request, the API automatically retries once after compacting older messages into a structured summary — no action required on your side. Without a `thread_id`, you must shorten your message history yourself before retrying.
+
+### `image_input_not_supported` — 400
+
+You sent an image in the request but the selected model does not support vision input. Check the model's `supports_vision` field from `GET /v1/models` and select a vision-capable model before retrying.
+
+### `context_too_large` — 413
+
+Applies to **System One** (`/v1/systemone`) only. Your request exceeded the 64 k-token limit (state + all questions). There is no automatic compaction for System One — shrink your `state` field and retry.
+
+### `model_not_found` — 404
+
+The model ID you provided does not exist or is not visible on your current tier. Always discover model IDs dynamically via `GET /v1/models` rather than hardcoding them.
+
+### `not_implemented` — 501
+
+Returned by the `/v1/moderations` endpoint, which is present for SDK compatibility but not yet active. Do not rely on it for safety filtering.
+
+## `finish_reason` Values
+
+The `finish_reason` field on a completion choice tells you why the model stopped generating.
+
+| Value | Meaning |
+|-------|---------|
+| `stop` | The model reached a natural end of its response |
+| `length` | Generation stopped because `max_tokens` was reached — consider increasing the limit |
+| `tool_calls` | The model is requesting one or more tool/function calls — submit tool results to continue |

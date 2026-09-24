@@ -1,0 +1,192 @@
+---
+title: "Public Status and Health Endpoints"
+sidebarTitle: "Status"
+description: "No-auth status and health endpoints for Piramyd: runtime metrics, per-model health, global token stats, and the root service info endpoint."
+---
+
+These endpoints require no authentication. Use them to monitor platform availability, check which models are currently healthy, track global usage, and verify that your integration can reach the API. They are safe to call from health-check scripts, uptime monitors, and observability dashboards without exposing any credentials.
+
+## Endpoint Reference
+
+| Method | Path                            | Description                                                    |
+|--------|---------------------------------|----------------------------------------------------------------|
+| `GET`  | `/`                             | Service info                                                   |
+| `GET`  | `/health`                       | Health check with circuit breaker status                       |
+| `GET`  | `/v1/status/runtime`            | Public runtime metrics: active nodes, active models, uptime    |
+| `GET`  | `/v1/status/models`             | Per-model health and availability, refreshed every 5 minutes   |
+| `GET`  | `/v1/stats/tokens`              | Global public token totals                                     |
+| `GET`  | `/v1/stats/tokens/leaderboard`  | Global totals, per-model breakdown, anonymized top users       |
+
+---
+
+## GET /v1/status/runtime
+
+Returns high-level runtime metrics for the Piramyd platform: the number of active nodes, how many models are currently serving traffic, and how long the service has been running. No API key required.
+
+**Base URL:** `https://api.piramyd.cloud`
+
+### Response Fields
+
+<ResponseField name="active_nodes" type="integer">
+  Number of inference routing nodes currently online.
+</ResponseField>
+
+<ResponseField name="active_models" type="integer">
+  Number of models currently accepting requests across all nodes.
+</ResponseField>
+
+<ResponseField name="uptime_seconds" type="integer">
+  Seconds elapsed since the last service restart.
+</ResponseField>
+
+### Example
+
+```python
+import httpx
+
+resp = httpx.get("https://api.piramyd.cloud/v1/status/runtime")
+metrics = resp.json()
+
+print(f"Active nodes:  {metrics['active_nodes']}")
+print(f"Active models: {metrics['active_models']}")
+print(f"Uptime:        {metrics['uptime_seconds']}s")
+```
+
+```bash
+curl -s https://api.piramyd.cloud/v1/status/runtime | python3 -m json.tool
+```
+
+This endpoint is ideal as a lightweight integration health check — a successful `200` response with `active_models > 0` confirms the gateway is operational before you begin routing inference requests.
+
+---
+
+## GET /v1/status/models
+
+Returns a per-model health and availability report. The data is refreshed every **5 minutes**, making it suitable for dashboards and pre-flight checks but not for sub-minute monitoring.
+
+**Base URL:** `https://api.piramyd.cloud`
+
+### Response Fields
+
+<ResponseField name="models" type="array">
+  List of model health objects. Each entry describes one model's current state.
+
+  <ResponseField name="id" type="string">
+    The model ID, matching entries in `GET /v1/models`.
+  </ResponseField>
+
+  <ResponseField name="status" type="string">
+    Current health status. Typical values: `healthy`, `degraded`, `unavailable`.
+  </ResponseField>
+
+  <ResponseField name="last_checked" type="string">
+    ISO 8601 timestamp of the most recent health check.
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```python
+import httpx
+
+resp = httpx.get("https://api.piramyd.cloud/v1/status/models")
+data = resp.json()
+
+for model in data.get("models", []):
+    print(f"{model['id']:40s}  {model['status']}")
+```
+
+```bash
+curl -s https://api.piramyd.cloud/v1/status/models | python3 -m json.tool
+```
+
+Check this endpoint before routing critical requests to a specific model. If a model's `status` is `degraded` or `unavailable`, switch to an alternative from `GET /v1/models` rather than waiting on retries.
+
+---
+
+## GET /health
+
+A lightweight health check that also exposes internal circuit breaker state. Use this as your primary **ping endpoint** for uptime monitoring tools (e.g. UptimeRobot, Checkly, Datadog synthetics).
+
+**Base URL:** `https://api.piramyd.cloud`
+
+A `200 OK` response indicates the gateway is reachable and circuit breakers are not in a tripped state. Non-`200` responses indicate a service-level problem.
+
+### Example
+
+```bash
+# Simple liveness check
+curl -sf https://api.piramyd.cloud/health && echo "OK" || echo "DOWN"
+```
+
+```python
+import httpx
+
+resp = httpx.get("https://api.piramyd.cloud/health")
+print("Healthy" if resp.status_code == 200 else f"Unhealthy: {resp.status_code}")
+```
+
+<Note>
+  `/health` lives at the root domain (`https://api.piramyd.cloud/health`), not under the `/v1` prefix. If you're constructing URLs programmatically from a `BASE_URL` of `https://api.piramyd.cloud/v1`, remember to strip the prefix for this endpoint.
+</Note>
+
+---
+
+## GET /
+
+Returns basic service information about the API. Useful for confirming connectivity and discovering the API version in automated bootstrapping sequences.
+
+**Base URL:** `https://api.piramyd.cloud`
+
+```bash
+curl -s https://api.piramyd.cloud/ | python3 -m json.tool
+```
+
+---
+
+## GET /v1/stats/tokens
+
+Returns global public token totals across all users and models on the platform. No authentication required.
+
+**Base URL:** `https://api.piramyd.cloud`
+
+### Example
+
+```bash
+curl -s https://api.piramyd.cloud/v1/stats/tokens | python3 -m json.tool
+```
+
+These totals reflect overall platform activity and can give you a sense of Piramyd's traffic volume over time.
+
+---
+
+## GET /v1/stats/tokens/leaderboard
+
+Returns global token usage broken down by model, plus an anonymized list of top users by token consumption. No authentication required.
+
+**Base URL:** `https://api.piramyd.cloud`
+
+### Example
+
+```bash
+curl -s https://api.piramyd.cloud/v1/stats/tokens/leaderboard | python3 -m json.tool
+```
+
+```python
+import httpx
+
+resp = httpx.get("https://api.piramyd.cloud/v1/stats/tokens/leaderboard")
+leaderboard = resp.json()
+
+# Identify the most-used models on the platform
+for entry in leaderboard.get("models", []):
+    print(f"{entry['model_id']:40s}  {entry['total_tokens']:,} tokens")
+```
+
+Use this endpoint to understand which models are seeing the heaviest traffic on the platform — useful context when deciding which model to prioritize for your own workloads or when researching availability patterns.
+
+---
+
+<Tip>
+  Poll `GET /v1/status/models` before routing requests to a specific model. If a model shows a `degraded` or `unavailable` status, fall back to an alternative from `GET /v1/models` immediately rather than absorbing retry latency from a struggling upstream.
+</Tip>

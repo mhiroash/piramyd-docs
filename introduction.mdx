@@ -1,0 +1,74 @@
+---
+title: "What is Piramyd? AI Inference Gateway Overview"
+sidebarTitle: "Introduction"
+description: "Piramyd is an OpenAI-compatible inference gateway that routes AI requests to OpenAI, Anthropic, and other providers through a single unified API with web intelligence built in."
+---
+
+Piramyd is an AI inference gateway that gives you a single, OpenAI-compatible API endpoint for routing requests to OpenAI, Anthropic, and other upstream providers. Whether you're building a production application, an AI agent, or just experimenting, Piramyd eliminates the complexity of managing multiple provider SDKs, credentials, and rate limits. Every feature — from streaming chat completions and tool calling to live web search and full-site crawling — is available through one consistent interface under `https://api.piramyd.cloud/v1`.
+
+## Key Capabilities
+
+<CardGroup cols={2}>
+  <Card title="Chat Completions" icon="messages">
+    Fully OpenAI-compatible `POST /v1/chat/completions` endpoint. Drop in Piramyd's base URL with your existing OpenAI SDK and start routing to any supported model immediately.
+  </Card>
+  <Card title="Anthropic Messages" icon="robot">
+    Native Anthropic-compatible `POST /v1/messages` endpoint. Use `x-api-key` or `Authorization: Bearer` — your existing Anthropic client works without code changes.
+  </Card>
+  <Card title="System One Decisions" icon="brain">
+    Typed, calibrated decisions via `POST /v1/systemone`. Submit a `state` and a map of `noul`, `choice`, or `score` questions and receive structured probabilistic answers in under 500 ms.
+  </Card>
+  <Card title="Web Search (SIRS)" icon="magnifying-glass">
+    Multi-engine web search via `POST /v1/search`. Powered by SIRS (SearXNG), with optional per-result full-page content extraction in the same request.
+  </Card>
+  <Card title="Web Scraping & Crawling (CROWD)" icon="globe">
+    Single-URL scraping, full site crawls, URL mapping, and structured LLM extraction via `POST /v1/scrape`, `/v1/crawl`, `/v1/map`, and `/v1/extract`. Powered by CROWD (Firecrawl).
+  </Card>
+  <Card title="Context Compaction" icon="compress">
+    Long conversations that exceed a model's context window are automatically compacted. Pass a `thread_id` in any request and the API handles the rest transparently.
+  </Card>
+  <Card title="Tool Calling" icon="wrench">
+    Function calling with automatic argument buffering, JSON repair, and mid-stream continuation. Works with any model that reports `supports_tools: true`.
+  </Card>
+  <Card title="Vision" icon="eye">
+    Send images alongside text in any chat or responses request. Works with any model that reports `supports_vision: true`. Upload images via `POST /v1/images/upload` to avoid base64 payload limits.
+  </Card>
+</CardGroup>
+
+## Base URLs
+
+Use the `/v1` prefix for all production integrations. The internal services (`search.piramyd.cloud`, `crawl.piramyd.cloud`) are proxied through the main API — you never call them directly.
+
+| URL | Purpose |
+|-----|---------|
+| `https://api.piramyd.cloud/v1` | Versioned API root — use this in all clients |
+| `https://api.piramyd.cloud/docs` | Interactive OpenAPI explorer |
+| `https://api.piramyd.cloud/health` | Health check and circuit-breaker status |
+| `https://dash.piramyd.cloud` | Dashboard: API keys, billing, playground |
+
+## Plans & Rate Limits
+
+Piramyd has no free forever tier. You start with a **3-day trial** (card required) on the Solo plan, and then choose a paid plan to continue. Tokens are **unlimited** on all paid plans — throughput is governed by requests per minute (RPM).
+
+| Plan | Price | RPM |
+|------|-------|-----|
+| Solo (incl. 3-day trial) | $30 / month | 6 |
+| Growth | $50 / month | 10 |
+| Scale | $90 / month | 20 |
+
+Additional RPM (+5 RPM) is available as a paid add-on on eligible plans. Manage your plan and purchase add-ons from the [dashboard](https://dash.piramyd.cloud).
+
+<Note>
+  A `402` response means you've hit a billing limit. A `403` response means a feature or model requires a higher tier. Neither indicates a weekly token budget — tokens are unlimited on paid plans.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Make your first API call in under five minutes using Python or JavaScript.
+  </Card>
+  <Card title="Authentication" icon="key" href="/authentication">
+    Learn how to obtain and use API keys and JWTs.
+  </Card>
+</CardGroup>

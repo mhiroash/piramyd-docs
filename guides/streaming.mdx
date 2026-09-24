@@ -1,0 +1,181 @@
+---
+title: "Stream AI Responses with Server-Sent Events"
+sidebarTitle: "Streaming"
+description: "Enable real-time streaming from Piramyd using Server-Sent Events. Set stream: true and handle SSE chunks for chat completions and responses endpoints."
+---
+
+Streaming lets you display model output to users as it is generated rather than waiting for the full response. Piramyd uses the standard Server-Sent Events (SSE) format — the same format used by OpenAI — so any SSE client or SDK that works with OpenAI works with Piramyd without modification. Both the chat completions and responses endpoints support streaming.
+
+## Chat Completions Streaming
+
+Set `stream: true` in your request body to enable SSE output. Add `stream_options: {"include_usage": true}` to receive a final token-count chunk before the `[DONE]` sentinel.
+
+```json
+{
+  "model": "claude-opus-4.8",
+  "messages": [
+    {"role": "user", "content": "Write a Python function to sort a list."}
+  ],
+  "stream": true,
+  "stream_options": {"include_usage": true}
+}
+```
+
+The response body is a sequence of `data:` lines, each containing a JSON chunk:
+
+```
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Here"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" is"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":85,"total_tokens":97}}
+
+data: [DONE]
+```
+
+Each chunk type signals a different phase:
+
+| Chunk | What it means |
+|-------|--------------|
+| `delta` with `role` | Stream opened; role is `"assistant"` |
+| `delta` with `content` | Incremental text token(s) |
+| Empty `delta`, non-null `finish_reason` | Generation complete; `finish_reason` is `stop`, `length`, or `tool_calls` |
+| Empty `choices`, `usage` present | Final token-count chunk (only when `stream_options.include_usage: true`) |
+| `[DONE]` | Stream closed |
+
+<CodeGroup>
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="sk-YOUR_PIRAMYD_KEY",
+    base_url="https://api.piramyd.cloud/v1",
+)
+
+with client.chat.completions.stream(
+    model="claude-opus-4.8",
+    messages=[{"role": "user", "content": "Write a Python function to sort a list."}],
+    stream_options={"include_usage": True},
+) as stream:
+    for chunk in stream:
+        delta = chunk.choices[0].delta if chunk.choices else None
+        if delta and delta.content:
+            print(delta.content, end="", flush=True)
+```
+
+```typescript TypeScript / JavaScript
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: "sk-YOUR_PIRAMYD_KEY",
+  baseURL: "https://api.piramyd.cloud/v1",
+});
+
+const stream = await client.chat.completions.create({
+  model: "claude-opus-4.8",
+  messages: [{ role: "user", content: "Write a Python function to sort a list." }],
+  stream: true,
+  stream_options: { include_usage: true },
+});
+
+for await (const chunk of stream) {
+  const content = chunk.choices[0]?.delta?.content ?? "";
+  process.stdout.write(content);
+}
+```
+
+</CodeGroup>
+
+## Responses Endpoint Streaming
+
+The `POST /v1/responses` endpoint emits **structured named events** instead of generic `chat.completion.chunk` objects. Each SSE line includes both an `event:` field and a `data:` field. This format maps closely to the OpenAI Responses API event schema.
+
+The full event sequence for a streaming response looks like this:
+
+```
+event: response.created
+data: {"id":"resp_...","object":"response","status":"in_progress",...}
+
+event: response.in_progress
+data: {"id":"resp_...","object":"response","status":"in_progress",...}
+
+event: response.output_item.added
+data: {"type":"output_item.added","output_index":0,"item":{"type":"message","role":"assistant",...}}
+
+event: response.content_part.added
+data: {"type":"content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}
+
+event: response.output_text.delta
+data: {"type":"output_text.delta","output_index":0,"content_index":0,"delta":"Here "}
+
+event: response.output_text.delta
+data: {"type":"output_text.delta","output_index":0,"content_index":0,"delta":"is the code:"}
+
+event: response.output_text.done
+data: {"type":"output_text.done","output_index":0,"content_index":0,"text":"Here is the code:..."}
+
+event: response.content_part.done
+data: {...}
+
+event: response.output_item.done
+data: {...}
+
+event: response.completed
+data: {"id":"resp_...","object":"response","status":"completed","usage":{"input_tokens":20,"output_tokens":150,"total_tokens":170},...}
+
+data: [DONE]
+```
+
+The `response.completed` event includes the full `usage` object — you do not need a separate `stream_options` flag on the responses endpoint.
+
+## Streaming Error Handling
+
+Errors that occur mid-stream arrive as a `data:` event with an `error` key — **not** as an HTTP error status code. Your SSE parser must check for this shape on every chunk:
+
+```json
+data: {"error": {"message": "Upstream provider unavailable.", "type": "provider_error", "code": "upstream_error", "request_id": "req_abc123"}}
+```
+
+A minimal error-aware loop in Python looks like this:
+
+```python
+for chunk in stream:
+    raw = chunk.model_dump()
+    if "error" in raw:
+        raise RuntimeError(f"Stream error: {raw['error']['message']}")
+    delta = chunk.choices[0].delta if chunk.choices else None
+    if delta and delta.content:
+        print(delta.content, end="", flush=True)
+```
+
+## Streaming Tool Calls
+
+When a model returns a tool call during a streamed response, the `function.arguments` field arrives as a sequence of fragments across multiple chunks. You must **accumulate all fragments before calling `JSON.parse`** — individual chunks are not valid JSON on their own.
+
+Piramyd's [tool call integrity](/concepts/tool-call-integrity) feature automatically buffers argument deltas and emits a single validated chunk, so the JSON you receive is always complete and well-formed. You still need to accumulate across chunks, but you will not receive truncated or malformed JSON.
+
+```python
+tool_calls_buffer = {}
+
+for chunk in stream:
+    for tc in (chunk.choices[0].delta.tool_calls or []):
+        idx = tc.index
+        if idx not in tool_calls_buffer:
+            tool_calls_buffer[idx] = {"id": tc.id, "name": tc.function.name, "arguments": ""}
+        tool_calls_buffer[idx]["arguments"] += tc.function.arguments or ""
+
+# Safe to parse only after the stream is closed
+import json
+for tc in tool_calls_buffer.values():
+    args = json.loads(tc["arguments"])
+    print(tc["name"], args)
+```
+
+<Tip>
+Always include `stream_options: {"include_usage": true}` when streaming chat completions. The token count arrives in the final chunk before `[DONE]` and is the only reliable way to track usage during a streamed session.
+</Tip>

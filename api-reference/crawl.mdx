@@ -1,0 +1,240 @@
+---
+title: "POST /v1/crawl — Async Site Crawl via CROWD"
+sidebarTitle: "Crawl"
+description: "POST /v1/crawl starts an async website crawl. Returns a job_id immediately. Poll GET /v1/crawl/{job_id} for status and results. Cancel with DELETE."
+---
+
+Use `POST /v1/crawl` to recursively crawl an entire website and extract content from every page. The crawl runs asynchronously — the endpoint returns a `job_id` immediately and processes pages in the background via CROWD (Firecrawl). Poll `GET /v1/crawl/{job_id}` to check progress and retrieve results as they accumulate. If you need to stop a crawl early, send `DELETE /v1/crawl/{job_id}`.
+
+<Tip>
+  Before crawling, use **`POST /v1/map`** to discover the URL structure of the site. Map is much faster and lets you filter `include_paths` or `exclude_paths` to a relevant subset before committing to a full crawl.
+</Tip>
+
+---
+
+## Start a Crawl
+
+```
+POST https://api.piramyd.cloud/v1/crawl
+```
+
+**Authentication:** `Authorization: Bearer sk-<key>`
+
+### Request Parameters
+
+<ParamField body="url" type="string" required>
+  Root URL to begin crawling from. The crawler follows links discovered on each page, staying within the same domain.
+</ParamField>
+
+<ParamField body="limit" type="integer" default="10">
+  Maximum number of pages to crawl. Accepted range: **1–100**.
+</ParamField>
+
+<ParamField body="max_depth" type="integer">
+  Maximum link depth from the root URL. Accepted range: **1–10**. Omit to crawl without a depth limit (up to `limit` pages).
+</ParamField>
+
+<ParamField body="formats" type="string[]" default='["markdown"]'>
+  Output formats to extract per page. Any combination of `"markdown"`, `"html"`, `"links"`, `"screenshot"`.
+</ParamField>
+
+<ParamField body="only_main_content" type="boolean" default="true">
+  Strip navigation, headers, footers, and boilerplate from each page, returning only main content.
+</ParamField>
+
+<ParamField body="exclude_paths" type="string[]">
+  URL path patterns to skip during the crawl. Supports glob syntax (e.g. `["/blog/*", "/tag/*"]`). Pages matching any pattern are not fetched.
+</ParamField>
+
+<ParamField body="include_paths" type="string[]">
+  Only crawl URLs matching at least one of these path patterns. Pages that do not match are skipped. Useful for restricting crawls to a specific section (e.g. `["/docs/*"]`).
+</ParamField>
+
+### Response
+
+```json
+{
+  "success": true,
+  "job_id": "crawl_abc123",
+  "url": "https://docs.python.org/3/"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `success` | boolean | `true` if the crawl job was created successfully. |
+| `job_id` | string | Unique job identifier. Use this to poll or cancel the crawl. |
+| `url` | string | The root URL the crawl was started from. |
+
+---
+
+## Poll for Results
+
+```
+GET https://api.piramyd.cloud/v1/crawl/{job_id}
+```
+
+Poll this endpoint until `status` is `completed`, `failed`, or `cancelled`. Results accumulate progressively — `data` may already contain finished pages while `status` is still `scraping`.
+
+### Response
+
+<ResponseField name="status" type="string">
+  Current crawl status. One of:
+
+  - `scraping` — crawl is in progress
+  - `completed` — all pages processed successfully
+  - `failed` — crawl encountered a fatal error
+  - `cancelled` — crawl was stopped by a DELETE request
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total number of pages queued for crawling.
+</ResponseField>
+
+<ResponseField name="completed" type="integer">
+  Number of pages that have finished processing so far.
+</ResponseField>
+
+<ResponseField name="creditsUsed" type="integer">
+  Number of CROWD credits consumed by this crawl job.
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of page result objects. Each object contains the extracted content for one crawled page.
+
+  <Expandable title="page result fields">
+    <ResponseField name="data[].markdown" type="string">
+      Cleaned markdown content of the page (when `"markdown"` is in `formats`).
+    </ResponseField>
+    <ResponseField name="data[].metadata" type="object">
+      Page metadata.
+
+      <Expandable title="metadata fields">
+        <ResponseField name="data[].metadata.sourceURL" type="string">
+          The URL of this specific page.
+        </ResponseField>
+        <ResponseField name="data[].metadata.statusCode" type="integer">
+          HTTP status code returned by the page.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Cancel a Crawl
+
+```
+DELETE https://api.piramyd.cloud/v1/crawl/{job_id}
+```
+
+Cancels a running crawl job. Any pages already processed are still available via `GET /v1/crawl/{job_id}` with `status: "cancelled"`. Returns `200` on success.
+
+---
+
+## Code Example
+
+<CodeGroup>
+
+```python Python
+import httpx
+import time
+
+PIRAMYD_KEY = "sk-YOUR_KEY"
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": f"Bearer {PIRAMYD_KEY}"}
+
+# 1. Start the crawl
+start = httpx.post(
+    f"{BASE}/crawl",
+    headers=HEADERS,
+    json={
+        "url": "https://docs.python.org/3/",
+        "limit": 20,
+        "max_depth": 3,
+        "formats": ["markdown"],
+        "only_main_content": True,
+        "exclude_paths": ["/genindex/*", "/py-modindex/*"],
+        "include_paths": ["/library/*"],
+    },
+)
+start.raise_for_status()
+job_id = start.json()["job_id"]
+print(f"Crawl started: {job_id}")
+
+# 2. Poll until completed
+while True:
+    poll = httpx.get(f"{BASE}/crawl/{job_id}", headers=HEADERS)
+    poll.raise_for_status()
+    status_data = poll.json()
+
+    status = status_data["status"]
+    completed = status_data.get("completed", 0)
+    total = status_data.get("total", "?")
+    print(f"Status: {status} ({completed}/{total} pages)")
+
+    if status in ("completed", "failed", "cancelled"):
+        break
+
+    time.sleep(3)
+
+# 3. Print results
+if status == "completed":
+    pages = status_data.get("data", [])
+    print(f"\nCrawl complete — {len(pages)} pages retrieved")
+    for page in pages:
+        url = page["metadata"]["sourceURL"]
+        preview = page.get("markdown", "")[:200].replace("\n", " ")
+        print(f"\n  {url}\n  {preview}...")
+else:
+    print(f"Crawl ended with status: {status}")
+```
+
+```json Start crawl request body
+{
+  "url": "https://docs.python.org/3/",
+  "limit": 20,
+  "max_depth": 3,
+  "formats": ["markdown"],
+  "only_main_content": true,
+  "exclude_paths": ["/genindex/*", "/py-modindex/*"],
+  "include_paths": ["/library/*"]
+}
+```
+
+```json Poll response (completed)
+{
+  "status": "completed",
+  "total": 20,
+  "completed": 20,
+  "creditsUsed": 20,
+  "data": [
+    {
+      "markdown": "# Python 3.13 Documentation\n\n...",
+      "metadata": {
+        "sourceURL": "https://docs.python.org/3/",
+        "statusCode": 200
+      }
+    }
+  ]
+}
+```
+
+</CodeGroup>
+
+---
+
+## Errors
+
+| Error code | HTTP status | Description |
+|---|---|---|
+| `crawl_timeout` | 504 | The crawl job timed out. Retry with backoff, or reduce `limit` / `max_depth`. |
+| `crawl_upstream_error` | 502 | CROWD encountered an upstream error during crawling. Retry with backoff. |
+| `crawl_unavailable` | 502 | The CROWD service is temporarily unavailable. Retry with backoff. |
+| `crawl_internal_error` | 500 | Unexpected internal error. Retry with backoff. |
+| `crawl_job_not_found` | 404 | No crawl job found with the given `job_id`. Check the ID or confirm the job wasn't already purged. |
+
+<Note>
+  Crawl jobs are ephemeral. Results are not stored indefinitely — retrieve them promptly after the status reaches `completed`. Polling a `job_id` for a purged job returns `crawl_job_not_found` (404).
+</Note>

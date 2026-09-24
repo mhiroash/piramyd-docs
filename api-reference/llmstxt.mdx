@@ -1,0 +1,174 @@
+---
+title: "POST /v1/llmstxt — Generate llms.txt for Any Website"
+sidebarTitle: "llms.txt"
+description: "POST /v1/llmstxt — generate an llms.txt file for any website: a structured plain-text document of the site's content optimized for LLM context injection."
+---
+
+An [`llms.txt`](https://llmstxt.org/) file is a structured plain-text document that summarizes a website's content in a format optimized for injection into an LLM's context window. Instead of scraping dozens of pages individually and concatenating their markdown, `POST /v1/llmstxt` does that work for you — it crawls the site, extracts the most relevant content from up to `max_urls` pages, and compiles everything into a single well-structured document. AI agents can load this document at the start of a session to ground the model in a site's full knowledge base with a single API call. Set `show_full_text: true` to also generate an `llms-full.txt` variant with complete, untruncated page content.
+
+## Endpoint
+
+```
+POST https://api.piramyd.cloud/v1/llmstxt
+```
+
+**Authentication:** `Authorization: Bearer sk-<key>`
+
+---
+
+## Request Parameters
+
+<ParamField body="url" type="string" required>
+  The root URL of the website to generate `llms.txt` for (e.g. `https://fastapi.tiangolo.com`).
+</ParamField>
+
+<ParamField body="max_urls" type="integer" default="10">
+  Maximum number of pages to include in the generated document. Higher values produce more comprehensive output but take longer and consume more credits. Accepted range: **1–100**.
+</ParamField>
+
+<ParamField body="show_full_text" type="boolean" default="false">
+  When `true`, the response also includes `llmsfulltxt` — a second document containing the complete, untruncated content of every included page. Useful when you need exhaustive context rather than a summary-optimized document.
+</ParamField>
+
+<ParamField body="timeout_seconds" type="integer" default="60">
+  Maximum time in seconds for the generation job to complete synchronously. Accepted range: **10–120**. Larger sites may return `status: "processing"` with a `job_id` to poll.
+</ParamField>
+
+---
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  `true` if the generation request was accepted without error.
+</ResponseField>
+
+<ResponseField name="job_id" type="string">
+  Unique identifier for this generation job. Present on all responses — use it to poll when `status` is `"processing"`.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Generation status. Either `"completed"` (content is in this response) or `"processing"` (the job is still running — poll with `job_id`).
+</ResponseField>
+
+<ResponseField name="llmstxt" type="string">
+  The generated `llms.txt` content — a structured, summary-optimized plain-text document of the site. Present when `status` is `"completed"`.
+</ResponseField>
+
+<ResponseField name="llmsfulltxt" type="string | null">
+  The generated `llms-full.txt` content with complete page text. **Only present when `show_full_text: true` and `status` is `"completed"`.**
+</ResponseField>
+
+---
+
+## Code Example
+
+<CodeGroup>
+
+```python Python
+import httpx
+import time
+
+PIRAMYD_KEY = "sk-YOUR_KEY"
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": f"Bearer {PIRAMYD_KEY}"}
+
+resp = httpx.post(
+    f"{BASE}/llmstxt",
+    headers=HEADERS,
+    json={
+        "url": "https://docs.piramyd.cloud",
+        "max_urls": 30,
+        "show_full_text": False,
+        "timeout_seconds": 90,
+    },
+    timeout=100,
+)
+resp.raise_for_status()
+result = resp.json()
+
+# Handle async case
+if result["status"] == "processing":
+    job_id = result["job_id"]
+    print(f"Generation queued as {job_id}, polling...")
+    while result["status"] == "processing":
+        time.sleep(5)
+        poll = httpx.get(f"{BASE}/llmstxt/{job_id}", headers=HEADERS)
+        result = poll.json()
+
+# Use the generated content
+llmstxt_content = result["llmstxt"]
+print(f"Generated {len(llmstxt_content)} characters of llms.txt")
+print("\n--- llms.txt preview ---")
+print(llmstxt_content[:800])
+```
+
+```python Python (with full text)
+import httpx
+
+PIRAMYD_KEY = "sk-YOUR_KEY"
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": f"Bearer {PIRAMYD_KEY}"}
+
+resp = httpx.post(
+    f"{BASE}/llmstxt",
+    headers=HEADERS,
+    json={
+        "url": "https://fastapi.tiangolo.com",
+        "max_urls": 20,
+        "show_full_text": True,
+        "timeout_seconds": 120,
+    },
+    timeout=130,
+)
+resp.raise_for_status()
+result = resp.json()
+
+# Save both documents
+with open("llms.txt", "w") as f:
+    f.write(result["llmstxt"])
+
+if result.get("llmsfulltxt"):
+    with open("llms-full.txt", "w") as f:
+        f.write(result["llmsfulltxt"])
+    print("Saved llms.txt and llms-full.txt")
+```
+
+```json Example request body
+{
+  "url": "https://fastapi.tiangolo.com",
+  "max_urls": 20,
+  "show_full_text": false,
+  "timeout_seconds": 60
+}
+```
+
+```json Example response
+{
+  "success": true,
+  "job_id": "llmstxt_abc456",
+  "status": "completed",
+  "llmstxt": "# FastAPI\n\n> Modern, fast web framework for building APIs with Python\n\n## Docs\n\n- [Tutorial](https://fastapi.tiangolo.com/tutorial/): Step-by-step guide to building your first API...\n- [Advanced](https://fastapi.tiangolo.com/advanced/): Advanced user guide topics...",
+  "llmsfulltxt": null
+}
+```
+
+</CodeGroup>
+
+---
+
+## Errors
+
+| Error code | HTTP status | Description |
+|---|---|---|
+| `llmstxt_timeout` | 504 | Generation did not complete within `timeout_seconds`. Increase the timeout or reduce `max_urls`, then retry. |
+| `llmstxt_upstream_error` | 502 | CROWD returned an upstream error during content extraction. Retry with backoff. |
+| `llmstxt_unavailable` | 502 | The llms.txt generation service is temporarily unavailable. Retry with backoff. |
+| `llmstxt_internal_error` | 500 | Unexpected internal error. Retry with backoff. |
+
+<Note>
+  For large sites (`max_urls` > 20), set `timeout_seconds` to `120` and your HTTP client timeout to at least 130 seconds. Jobs that exceed the synchronous timeout return `status: "processing"` — poll the `job_id` until `status` is `"completed"`.
+</Note>
+
+<Tip>
+  You can use `POST /v1/llmstxt` on Piramyd's own docs to keep your agent up to date with the latest API capabilities — just point `url` at `https://docs.piramyd.cloud` and inject the result into your system prompt.
+</Tip>

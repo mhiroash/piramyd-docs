@@ -1,0 +1,234 @@
+---
+title: "Discover and Select Models on Piramyd"
+sidebarTitle: "Models"
+description: "Piramyd's model catalog is dynamic. Always call GET /v1/models to discover available models with their capabilities, context windows, and supported endpoints."
+---
+
+Piramyd's model catalog changes as new models are added and updated. Never hardcode a model ID in your application — always call `GET /v1/models` at runtime to discover what is available, inspect capabilities, and select the right model for your workload. This ensures your integration stays current without any code changes on your end.
+
+## GET /v1/models
+
+Returns the full list of models available to your API key, each with complete metadata.
+
+```http
+GET /v1/models
+Authorization: Bearer sk-YOUR_KEY
+```
+
+**Example response**
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "claude-opus-4.8",
+      "name": "Claude Opus 4.8",
+      "object": "model",
+      "owned_by": "anthropic",
+      "provider": "anthropic",
+      "type": "chat",
+      "tier": "pro",
+      "endpoints": ["/v1/chat/completions", "/v1/responses"],
+      "capabilities": ["text", "vision", "tool_use"],
+      "input_modalities": ["text", "image"],
+      "output_modalities": ["text"],
+      "context_length": 200000,
+      "max_output_tokens": 16384,
+      "supports_tools": true,
+      "supports_vision": true,
+      "supports_reasoning": false,
+      "description": "Anthropic's most capable model.",
+      "visibility": "list"
+    }
+  ]
+}
+```
+
+### Response fields
+
+<ResponseField name="id" type="string" required>
+  The model identifier to use as the `model` parameter in inference requests. This is the canonical ID — use it exactly as returned.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Human-readable display name for the model. May differ from `id`.
+</ResponseField>
+
+<ResponseField name="object" type="string">
+  Always `"model"` for entries in this list.
+</ResponseField>
+
+<ResponseField name="owned_by" type="string">
+  The organization that trained or owns the model (e.g. `"anthropic"`, `"openai"`).
+</ResponseField>
+
+<ResponseField name="provider" type="string">
+  The upstream provider Piramyd routes this model to. May differ from `owned_by` for multi-provider routing.
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Model type. Currently `"chat"` for all inference models. System One models appear separately via `GET /v1/systemone/models`.
+</ResponseField>
+
+<ResponseField name="tier" type="string" required>
+  The subscription tier required to use this model. One of:
+  - `free` — available on all plans including trial
+  - `pro` — requires Solo ($30/mo) or higher
+  - `premium` — requires Growth ($50/mo) or Scale ($90/mo)
+
+  Check `GET /v1/tiers` for a full overview.
+</ResponseField>
+
+<ResponseField name="endpoints" type="string[]">
+  The API paths this model can be called on. Common values: `"/v1/chat/completions"`, `"/v1/responses"`, `"/v1/messages"`. Only send a model to an endpoint listed here.
+</ResponseField>
+
+<ResponseField name="capabilities" type="string[]">
+  High-level capability tags such as `"text"`, `"vision"`, `"tool_use"`. Mirrors the `supports_*` boolean fields.
+</ResponseField>
+
+<ResponseField name="input_modalities" type="string[]">
+  The input types the model accepts: `"text"`, `"image"`, `"audio"`, `"video"`. Today's catalog is primarily `["text"]` or `["text", "image"]`.
+</ResponseField>
+
+<ResponseField name="output_modalities" type="string[]">
+  The output types the model produces. Currently `["text"]` for all chat models.
+</ResponseField>
+
+<ResponseField name="context_length" type="integer">
+  Maximum number of input tokens the model accepts in a single request. Keep your prompt plus conversation history within this limit.
+</ResponseField>
+
+<ResponseField name="max_output_tokens" type="integer">
+  Maximum tokens the model can generate in a single response. Use this to set a sensible upper bound for your `max_tokens` parameter.
+</ResponseField>
+
+<ResponseField name="supports_tools" type="boolean">
+  `true` if the model supports OpenAI-style function/tool calling. Always check this before sending `tools` in a request.
+</ResponseField>
+
+<ResponseField name="supports_vision" type="boolean">
+  `true` if the model accepts image inputs via `image_url` content blocks. Note: this means the model can *read* images, not generate them.
+</ResponseField>
+
+<ResponseField name="supports_reasoning" type="boolean">
+  `true` if the model supports extended chain-of-thought reasoning (e.g. thinking tokens).
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  A short human-readable description of the model's strengths and intended use.
+</ResponseField>
+
+<ResponseField name="visibility" type="string">
+  Controls whether the model appears in catalog listings. `"list"` means it appears in `GET /v1/models` responses.
+</ResponseField>
+
+---
+
+## GET /v1/models/\{model\_id\}
+
+Fetch metadata for a single model by its ID. Useful for validating a model ID your application has stored or received from user input.
+
+```http
+GET /v1/models/claude-opus-4.8
+Authorization: Bearer sk-YOUR_KEY
+```
+
+Returns the same object shape as a single entry in the `data` array above. The same normalization rules apply (see below).
+
+---
+
+## Model ID Normalization
+
+Piramyd accepts several ID formats for the same model. All of the following resolve to the same model:
+
+| Format | Example |
+|--------|---------|
+| Canonical ID | `claude-opus-4.8` |
+| Case-insensitive | `Claude-Opus-4.8` |
+| Provider-prefixed | `anthropic/claude-opus-4.8` |
+| OpenRouter-style | `anthropic/claude-opus-4.8` |
+
+Use the canonical `id` from `GET /v1/models` in production — normalization is provided for convenience, not as a primary interface.
+
+---
+
+## GET /v1/tiers
+
+Returns an overview of which model tiers are available for your current subscription plan. Use this to understand which `tier` values (`free`, `pro`, `premium`) you can access before iterating the full model list.
+
+```http
+GET /v1/tiers
+Authorization: Bearer sk-YOUR_KEY
+```
+
+---
+
+## Filtering Models Dynamically
+
+<Warning>
+  Do not hardcode model IDs in your application. Model IDs, availability, and capabilities change as the catalog evolves. Applications that hardcode IDs will break silently when a model is updated or removed.
+</Warning>
+
+<Tip>
+  Always check `supports_tools: true` before including a `tools` array in your request. Sending tool definitions to a model that does not support them will return a `400` error.
+</Tip>
+
+The following example discovers all tool-capable models at runtime and selects one dynamically:
+
+```python
+import httpx
+
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+# Discover the full model catalog
+response = httpx.get(f"{BASE}/models", headers=HEADERS)
+models = response.json()["data"]
+
+# Filter to chat models that support tool calling
+tool_models = [
+    m for m in models
+    if "/v1/chat/completions" in m.get("endpoints", [])
+    and m.get("supports_tools") is True
+]
+
+if not tool_models:
+    raise RuntimeError("No tool-capable models available on your plan")
+
+# Pick the first available tool-capable model
+chosen = tool_models[0]
+print(f"Using model: {chosen['id']}")
+print(f"Context window: {chosen['context_length']} tokens")
+print(f"Max output: {chosen['max_output_tokens']} tokens")
+
+# Use it in a request
+inference_response = httpx.post(
+    f"{BASE}/chat/completions",
+    headers=HEADERS,
+    json={
+        "model": chosen["id"],
+        "messages": [{"role": "user", "content": "Hello!"}],
+        "max_tokens": min(4096, chosen["max_output_tokens"]),
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get current weather for a city",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "city": {"type": "string"}
+                        },
+                        "required": ["city"]
+                    }
+                }
+            }
+        ],
+        "tool_choice": "auto",
+    },
+)
+print(inference_response.json()["choices"][0]["message"])
+```

@@ -1,0 +1,235 @@
+---
+title: "System One: Fast Typed Decisions with Jev Models"
+sidebarTitle: "System One"
+description: "System One models like Jev take a state and typed questions, returning calibrated answers—yes/no probabilities, choices, or scores—in 70–500 ms. No chat, no streaming."
+---
+
+System One is a distinct inference mode built for classification, scoring, and routing tasks — the kind of decisions that need to be fast, structured, and calibrated. Instead of generating free-form text, System One models (such as **Jev**) accept a `state` (the context to reason about) and a map of typed `questions`, and return one calibrated answer per question in roughly 70–500 ms. There is no chat, no streaming, no tool calling, and no system prompt — just deterministic, typed output optimised for high-throughput decision pipelines.
+
+## Key Differences from Chat Models
+
+System One works differently from the chat completions endpoint in several important ways:
+
+| Behaviour | Chat models | System One (Jev) |
+|-----------|-------------|-----------------|
+| Endpoint | `POST /v1/chat/completions` | `POST /v1/systemone` |
+| Output format | Free-form text | Typed answers (probability, choice, score) |
+| Streaming | Supported | **Not supported** |
+| Tool calling | Supported | **Not supported** |
+| System prompt | Supported | **Not supported** |
+| Context compaction | Automatic with `thread_id` | **None — shrink state manually** |
+| Output token billing | Billed | **Output tokens are free** |
+| Token limit | Varies by model | 64k per request; 32k for state + longest question |
+
+Sending a System One model to `POST /v1/chat/completions` returns `400`. Sending a chat model to `POST /v1/systemone` also returns `400`. The endpoints are not interchangeable.
+
+<Warning>
+System One models never substitute an unknown model with a similar one. An unrecognised or hidden model returns `404 model_not_found` immediately. If you rely on calibrated confidence thresholds, a different model would silently shift those thresholds — so Piramyd refuses rather than guesses.
+</Warning>
+
+## Discover System One Models
+
+System One models are listed at a separate endpoint and do **not** appear in the main `GET /v1/models` catalog used by chat completions.
+
+```python
+import httpx
+
+models = httpx.get(
+    "https://api.piramyd.cloud/v1/systemone/models",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+).json()
+
+for model in models["data"]:
+    print(model["id"])
+# jev-latest
+# jev-1.13.0
+# ...
+```
+
+<Warning>
+System One models do **not** appear in the main `GET /v1/models` catalog. Checking that list for Jev model IDs will return no results. Always use `GET /v1/systemone/models`.
+</Warning>
+
+## Request Shape
+
+A System One request has three top-level fields:
+
+- **`state`** — the context or text to analyse. Can be a string, an object, or an array.
+- **`model`** — a model ID from `GET /v1/systemone/models` (e.g. `"jev-latest"` or a pinned `"jev-1.13.0"`).
+- **`questions`** — a map of `question_key → question_definition`. Each question has a `type`, optional `instructions`, and optional `criteria`.
+
+### Question types
+
+**`noul` (yes/no)**
+
+Returns a probability from 0 to 1 that the answer is "yes". Provide optional `criteria` to define what `true` and `false` mean for this specific context.
+
+```json
+"is_urgent": {
+  "type": "noul",
+  "instructions": "Does this message convey urgency?",
+  "criteria": {
+    "true": "The user needs an immediate response.",
+    "false": "The user can wait for a normal reply."
+  }
+}
+```
+
+**`choice`**
+
+Returns the most likely option from a map of `option → rubric`. Supply 1–255 options; set rubric to `null` for options that need no special description.
+
+```json
+"department": {
+  "type": "choice",
+  "instructions": "Which team should handle this?",
+  "criteria": {
+    "billing": "Payments, refunds, subscription questions",
+    "technical": "Bugs, outages, API errors",
+    "sales": null
+  }
+}
+```
+
+**`score`**
+
+Returns a score along a scale you define as an ordered array of 2–10 level names. The score can land between levels. Also returns `legend`, `probabilities`, and `confidence`.
+
+```json
+"frustration": {
+  "type": "score",
+  "instructions": "How frustrated is the customer?",
+  "criteria": ["Calm", "Frustrated", "Very angry"]
+}
+```
+
+## Full Example
+
+Here is a complete customer support routing request and response:
+
+**Request**
+
+```json
+{
+  "state": "Help! My payouts have been failing for 3 days.",
+  "model": "jev-latest",
+  "questions": {
+    "is_urgent": {
+      "type": "noul",
+      "instructions": "Does this convey urgency?"
+    },
+    "department": {
+      "type": "choice",
+      "instructions": "Which team should handle this?",
+      "criteria": {
+        "billing": "Payments, refunds",
+        "technical": "Bugs, outages",
+        "sales": null
+      }
+    },
+    "frustration": {
+      "type": "score",
+      "instructions": "How frustrated is the customer?",
+      "criteria": ["Calm", "Frustrated", "Very angry"]
+    }
+  }
+}
+```
+
+**Response**
+
+```json
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "is_urgent": {
+      "type": "noul",
+      "noul": 0.95
+    },
+    "department": {
+      "type": "choice",
+      "choice": "billing",
+      "probabilities": {
+        "billing": 0.88,
+        "technical": 0.12,
+        "sales": 0.0
+      },
+      "confidence": 0.81
+    },
+    "frustration": {
+      "type": "score",
+      "score": 1.7,
+      "legend": ["Calm", "Frustrated", "Very angry"],
+      "probabilities": {
+        "Calm": 0.05,
+        "Frustrated": 0.6,
+        "Very angry": 0.35
+      },
+      "confidence": 0.72
+    }
+  },
+  "usage": {
+    "input_tokens": 304,
+    "output_tokens": 18
+  }
+}
+```
+
+In Python with httpx:
+
+```python
+import httpx
+
+resp = httpx.post(
+    "https://api.piramyd.cloud/v1/systemone",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    json={
+        "state": "Help! My payouts have been failing for 3 days.",
+        "model": "jev-latest",
+        "questions": {
+            "is_urgent": {"type": "noul", "instructions": "Does this convey urgency?"},
+            "department": {
+                "type": "choice",
+                "instructions": "Which team should handle this?",
+                "criteria": {"billing": "Payments, refunds", "technical": "Bugs, outages", "sales": None},
+            },
+            "frustration": {
+                "type": "score",
+                "instructions": "How frustrated is the customer?",
+                "criteria": ["Calm", "Frustrated", "Very angry"],
+            },
+        },
+    },
+)
+
+answers = resp.json()["answers"]
+print("Urgent:", answers["is_urgent"]["noul"])          # 0.95
+print("Route to:", answers["department"]["choice"])    # "billing"
+print("Frustration score:", answers["frustration"]["score"])  # 1.7
+```
+
+## Pinning Model Versions
+
+The `model` field in the response always reflects the **exact version** that answered — even when you requested an alias like `"jev-latest"`. For example:
+
+```json
+"model": "jev-1.13.0"
+```
+
+If you build automation that acts on `confidence` thresholds or specific `probabilities`, pin the model version. A future `jev-latest` might be better calibrated but will shift your thresholds. Pin, measure, re-calibrate, then upgrade deliberately.
+
+## Error Reference
+
+| Code | Type | Meaning |
+|------|------|---------|
+| `400` | — | Sent a System One model to `/chat/completions`, or a chat model to `/v1/systemone` |
+| `403` | tier | Your plan doesn't include access to this model |
+| `404` | `model_not_found` | Model ID not recognised or hidden — never a substitute |
+| `413` | `context_too_large` | State + questions exceed 64k tokens (or 32k for state + longest question) |
+| `422` | — | Invalid question definition (bad `type`, malformed `criteria`, etc.) |
+| `429` | rate limit | Too many requests — retry with exponential backoff, honour `Retry-After` |
+| `503` | `provider_unavailable` | Upstream System One provider unavailable — retry with backoff |
+
+<Warning>
+`413 context_too_large` cannot be resolved automatically. System One has no context compaction — shrink your `state` manually. If the state is a document, extract only the relevant paragraph or section before sending it.
+</Warning>

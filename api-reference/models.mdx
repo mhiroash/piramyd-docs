@@ -1,0 +1,283 @@
+---
+title: "GET /v1/models — List and Retrieve Models"
+sidebarTitle: "Models"
+description: "GET /v1/models returns all available models with capabilities, context windows, and supported endpoints. Always discover models at runtime — never hardcode model IDs."
+---
+
+Piramyd's model catalog is live and changes as providers release new models, retire old ones, and adjust tier availability. Always call `GET /v1/models` at startup — or per request in dynamic environments — and select the model that matches the capabilities you need. Never hardcode a model ID: what works today may be gone tomorrow, and a fresher or cheaper model may be the right choice tomorrow.
+
+---
+
+## GET /v1/models
+
+Returns the full model catalog as an OpenAI-compatible list object. Each entry includes capability flags, modality declarations, context window sizes, and the exact endpoint paths the model supports.
+
+**Authentication:** `Authorization: Bearer sk-<your-key>`
+
+### Response shape
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "claude-opus-4.8",
+      "name": "Claude Sonnet 4.6",
+      "object": "model",
+      "owned_by": "anthropic",
+      "provider": "anthropic",
+      "type": "chat",
+      "tier": "pro",
+      "endpoints": ["/v1/chat/completions", "/v1/responses"],
+      "capabilities": ["text", "vision", "tool_use"],
+      "input_modalities": ["text", "image"],
+      "output_modalities": ["text"],
+      "context_length": 200000,
+      "max_output_tokens": 16384,
+      "supports_tools": true,
+      "supports_vision": true,
+      "supports_reasoning": false,
+      "description": "...",
+      "visibility": "list"
+    }
+  ]
+}
+```
+
+### Response fields
+
+<ResponseField name="object" type="string">
+  Always `"list"`. Matches the OpenAI list object envelope.
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of model objects. Each object contains the fields described below.
+</ResponseField>
+
+<ResponseField name="data[].id" type="string" required>
+  The model identifier. Pass this value as the `model` parameter in any inference
+  request. See [Model ID normalization](#model-id-normalization) for accepted
+  formats.
+</ResponseField>
+
+<ResponseField name="data[].name" type="string">
+  Human-readable display name for the model, suitable for UI presentation.
+</ResponseField>
+
+<ResponseField name="data[].object" type="string">
+  Always `"model"`.
+</ResponseField>
+
+<ResponseField name="data[].owned_by" type="string">
+  The upstream provider that owns the model weights — for example `anthropic`,
+  `openai`. Use this to filter by provider.
+</ResponseField>
+
+<ResponseField name="data[].provider" type="string">
+  Same value as `owned_by`. Present for compatibility with OpenRouter-style
+  tooling that expects a `provider` field.
+</ResponseField>
+
+<ResponseField name="data[].type" type="string">
+  Model type. `"chat"` for all current conversational models.
+</ResponseField>
+
+<ResponseField name="data[].tier" type="string">
+  The subscription tier required to access this model. One of `"free"`,
+  `"pro"`, or `"premium"`. Check your plan against this field before
+  selecting a model.
+</ResponseField>
+
+<ResponseField name="data[].endpoints" type="string[]">
+  The API endpoint paths this model supports — for example
+  `["/v1/chat/completions", "/v1/responses"]`. Check this array before
+  routing a request to a specific endpoint.
+</ResponseField>
+
+<ResponseField name="data[].capabilities" type="string[]">
+  High-level capability tags — for example `["text", "vision", "tool_use"]`.
+  Use these for broad filtering; prefer the boolean flags below for
+  programmatic checks.
+</ResponseField>
+
+<ResponseField name="data[].input_modalities" type="string[]">
+  The input types this model accepts — for example `["text", "image"]`. Only
+  send image content to models that declare `"image"` here.
+</ResponseField>
+
+<ResponseField name="data[].output_modalities" type="string[]">
+  The output types this model produces — for example `["text"]`.
+</ResponseField>
+
+<ResponseField name="data[].context_length" type="integer">
+  Maximum number of input tokens the model accepts in a single request. Use
+  this to validate your prompt length before sending.
+</ResponseField>
+
+<ResponseField name="data[].max_output_tokens" type="integer">
+  Maximum tokens the model can generate in a single response. Cap your
+  `max_tokens` parameter at or below this value.
+</ResponseField>
+
+<ResponseField name="data[].supports_tools" type="boolean">
+  `true` if the model supports OpenAI-style function/tool calling. Always
+  check this before including a `tools` array in your request — sending tools
+  to an unsupported model returns an error.
+</ResponseField>
+
+<ResponseField name="data[].supports_vision" type="boolean">
+  `true` if the model accepts image inputs via the `image_url` content type.
+  This means the model can *read* images sent in a chat or responses request —
+  not generate them.
+</ResponseField>
+
+<ResponseField name="data[].supports_reasoning" type="boolean">
+  `true` if the model supports chain-of-thought / extended reasoning modes.
+</ResponseField>
+
+<ResponseField name="data[].description" type="string">
+  Human-readable description of the model's strengths and intended use cases.
+</ResponseField>
+
+<ResponseField name="data[].visibility" type="string">
+  `"list"` means the model appears in the public catalog. Models with other
+  values are accessible by ID but do not surface in the listing.
+</ResponseField>
+
+### Filter for tool-capable models
+
+Use the response to build a filtered list at startup, then pick a model that matches your needs:
+
+<CodeGroup>
+
+```python Python
+import httpx
+
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+# Fetch the full catalog
+resp = httpx.get(f"{BASE}/models", headers=HEADERS)
+resp.raise_for_status()
+catalog = resp.json()["data"]
+
+# Keep only models that support tool calling
+tool_models = [m for m in catalog if m.get("supports_tools")]
+
+# Sort by context window (descending) and pick the largest
+tool_models.sort(key=lambda m: m["context_length"], reverse=True)
+chosen = tool_models[0]
+
+print(f"Using {chosen['id']} — {chosen['context_length']:,} token context")
+print(f"  Max output : {chosen['max_output_tokens']:,} tokens")
+print(f"  Tier       : {chosen['tier']}")
+print(f"  Endpoints  : {chosen['endpoints']}")
+```
+
+```typescript TypeScript
+const BASE = "https://api.piramyd.cloud/v1";
+const HEADERS = { Authorization: "Bearer sk-YOUR_KEY" };
+
+const resp = await fetch(`${BASE}/models`, { headers: HEADERS });
+const { data: catalog } = await resp.json();
+
+// Filter for vision + tool-capable models
+const visionToolModels = catalog.filter(
+  (m: any) => m.supports_tools && m.supports_vision
+);
+
+// Pick the one with the largest context window
+visionToolModels.sort((a: any, b: any) => b.context_length - a.context_length);
+const chosen = visionToolModels[0];
+
+console.log(`Using ${chosen.id} — ${chosen.context_length.toLocaleString()} token context`);
+```
+
+</CodeGroup>
+
+---
+
+## GET /v1/models/\{model\_id\}
+
+Retrieve metadata for a single model by its ID. Useful for validating a model ID at startup or refreshing a cached entry.
+
+**Authentication:** `Authorization: Bearer sk-<your-key>`
+
+### Model ID normalization
+
+The API accepts model IDs in several equivalent formats — useful when working with IDs copied from different sources. All of the following resolve to the same model:
+
+| Format | Example |
+|--------|---------|
+| Canonical ID | `claude-opus-4.8` |
+| Case-insensitive | `Claude-Sonnet-4-6` |
+| Provider-prefixed | `anthropic/claude-opus-4.8` |
+| OpenRouter-style | `anthropic/claude-opus-4.8` |
+
+<CodeGroup>
+
+```python Python
+import httpx
+
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+# All three calls return the same model object
+for model_id in [
+    "claude-opus-4.8",
+    "Claude-Sonnet-4-6",
+    "anthropic/claude-opus-4.8",
+]:
+    resp = httpx.get(f"{BASE}/models/{model_id}", headers=HEADERS)
+    if resp.status_code == 200:
+        m = resp.json()
+        print(f"{model_id!r} → {m['id']}  (context: {m['context_length']:,})")
+    else:
+        print(f"{model_id!r} → {resp.status_code}")
+```
+
+```typescript TypeScript
+const BASE = "https://api.piramyd.cloud/v1";
+const HEADERS = { Authorization: "Bearer sk-YOUR_KEY" };
+
+const modelId = "anthropic/claude-opus-4.8"; // provider-prefixed style
+const resp = await fetch(`${BASE}/models/${encodeURIComponent(modelId)}`, {
+  headers: HEADERS,
+});
+
+if (resp.ok) {
+  const model = await resp.json();
+  console.log(model.id, model.context_length);
+} else {
+  console.error(resp.status, await resp.text());
+}
+```
+
+</CodeGroup>
+
+---
+
+## GET /v1/tiers
+
+Returns a tier and model availability overview, showing which models are accessible on each subscription tier.
+
+**Authentication:** `Authorization: Bearer sk-<your-key>`
+
+Use this endpoint to check which models your current plan unlocks — or to build a tier selection UI that shows users what they gain by upgrading.
+
+<Tip>
+  If you only need to know whether a specific model is available on your plan,
+  check the `tier` field on the individual model object from `GET /v1/models`
+  and compare it against your subscription. Use `GET /v1/tiers` when you want
+  the full picture across all plans.
+</Tip>
+
+---
+
+<Warning>
+  **Never hardcode model IDs.** The catalog changes: models are added,
+  deprecated, and renamed as providers ship updates. Always call
+  `GET /v1/models` at startup (or per-request in dynamic pipelines) and
+  select a model based on its capability flags. Hardcoded IDs will break
+  silently or return `404` when a model is retired.
+</Warning>

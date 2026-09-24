@@ -1,0 +1,175 @@
+---
+title: "POST /v1/scrape — Single URL Content Extraction (CROWD)"
+sidebarTitle: "Scrape"
+description: "POST /v1/scrape — extract clean content from a single URL via CROWD (Firecrawl). Returns markdown, HTML, links, or a screenshot optimized for LLM injection."
+---
+
+CROWD is Piramyd's self-hosted content extraction service, powered by Firecrawl at `crawl.piramyd.cloud`. Use `POST /v1/scrape` to fetch a single URL and receive its content in one or more output formats — markdown (stripped and cleaned for LLM injection), raw HTML, a list of all discovered links, or a rendered screenshot. By default, navigation bars, headers, footers, and other boilerplate are removed, leaving only the main page content.
+
+<Note>
+  The legacy alias `POST /v1/fetch` (and the unversioned `POST /fetch`) redirects with HTTP 307 to `POST /v1/scrape`, preserving the request body. Use `/v1/scrape` directly in new integrations.
+</Note>
+
+## Endpoint
+
+```
+POST https://api.piramyd.cloud/v1/scrape
+```
+
+**Authentication:** `Authorization: Bearer sk-<key>`
+
+---
+
+## Request Parameters
+
+<ParamField body="url" type="string" required>
+  The fully-qualified URL to scrape (e.g. `https://docs.python.org/3/whatsnew/3.13.html`).
+</ParamField>
+
+<ParamField body="formats" type="string[]" default='["markdown"]'>
+  Output formats to include in the response. Any combination of:
+
+  - `"markdown"` — cleaned, LLM-ready markdown
+  - `"html"` — raw page HTML
+  - `"links"` — all hyperlinks found on the page
+  - `"screenshot"` — base64-encoded rendered screenshot
+
+  Fields not in `formats` are omitted from `data`.
+</ParamField>
+
+<ParamField body="only_main_content" type="boolean" default="true">
+  When `true`, strips navigation, headers, footers, and sidebars, returning only the primary page content. Set to `false` if you need the full DOM.
+</ParamField>
+
+<ParamField body="timeout_ms" type="integer" default="60000">
+  Maximum time in milliseconds to wait for the page to load and extract. Accepted range: **1000–300000** (1 second to 5 minutes).
+</ParamField>
+
+---
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  `true` if the page was fetched and content extracted successfully.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Extracted content and metadata.
+
+  <Expandable title="data fields">
+    <ResponseField name="data.markdown" type="string">
+      Cleaned markdown representation of the page. Present when `"markdown"` is in `formats` (the default).
+    </ResponseField>
+    <ResponseField name="data.html" type="string">
+      Raw HTML of the page. **Only present when `"html"` is in `formats`.**
+    </ResponseField>
+    <ResponseField name="data.links" type="string[]">
+      All hyperlinks discovered on the page. **Only present when `"links"` is in `formats`.**
+    </ResponseField>
+    <ResponseField name="data.screenshot" type="string">
+      Base64-encoded PNG screenshot of the rendered page. **Only present when `"screenshot"` is in `formats`.**
+    </ResponseField>
+    <ResponseField name="data.metadata" type="object">
+      Page metadata extracted from HTML head and HTTP response.
+
+      <Expandable title="metadata fields">
+        <ResponseField name="data.metadata.title" type="string">
+          Page `<title>` tag content.
+        </ResponseField>
+        <ResponseField name="data.metadata.description" type="string">
+          `<meta name="description">` content, if present.
+        </ResponseField>
+        <ResponseField name="data.metadata.language" type="string">
+          Detected or declared page language (e.g. `"en"`).
+        </ResponseField>
+        <ResponseField name="data.metadata.sourceURL" type="string">
+          Final URL after any redirects.
+        </ResponseField>
+        <ResponseField name="data.metadata.statusCode" type="integer">
+          HTTP status code of the page response (e.g. `200`).
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Code Example
+
+<CodeGroup>
+
+```python Python
+import httpx
+
+PIRAMYD_KEY = "sk-YOUR_KEY"
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": f"Bearer {PIRAMYD_KEY}"}
+
+resp = httpx.post(
+    f"{BASE}/scrape",
+    headers=HEADERS,
+    json={
+        "url": "https://docs.python.org/3/whatsnew/3.13.html",
+        "formats": ["markdown", "links"],
+        "only_main_content": True,
+        "timeout_ms": 60000,
+    },
+    timeout=70,
+)
+
+data = resp.json()
+if data["success"]:
+    page = data["data"]
+    print(f"Title: {page['metadata']['title']}")
+    print(f"Language: {page['metadata']['language']}")
+    print(f"Status: {page['metadata']['statusCode']}")
+    print(f"\nMarkdown (first 500 chars):\n{page['markdown'][:500]}")
+    print(f"\nLinks found: {len(page['links'])}")
+```
+
+```json Example request body
+{
+  "url": "https://docs.python.org/3/whatsnew/3.13.html",
+  "formats": ["markdown", "links"],
+  "only_main_content": true,
+  "timeout_ms": 60000
+}
+```
+
+```json Example response
+{
+  "success": true,
+  "data": {
+    "markdown": "# What's New in Python 3.13\n\n...",
+    "links": [
+      "https://docs.python.org/3/library/ast.html"
+    ],
+    "metadata": {
+      "title": "What's New In Python 3.13",
+      "description": "This article explains the new features in Python 3.13...",
+      "language": "en",
+      "sourceURL": "https://docs.python.org/3/whatsnew/3.13.html",
+      "statusCode": 200
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+---
+
+## Errors
+
+| Error code | HTTP status | Description |
+|---|---|---|
+| `scrape_timeout` | 504 | The page did not load within `timeout_ms`. Retry with a higher timeout or backoff. |
+| `scrape_upstream_error` | 502 | CROWD received an error from the target server. Retry with backoff. |
+| `scrape_unavailable` | 502 | The CROWD service is temporarily unavailable. Retry with backoff. |
+| `scrape_failed` | 422 | The URL could not be scraped (e.g. bot protection, non-HTML content). Do not retry without modifying the request. |
+| `scrape_internal_error` | 500 | Unexpected internal error. Retry with backoff. |
+
+<Warning>
+  A `scrape_failed` (422) response indicates the target page actively blocked extraction or returned an unsupported content type. Retrying the same request will not help — inspect the URL and content type before trying again.
+</Warning>

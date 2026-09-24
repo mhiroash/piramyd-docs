@@ -1,30 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
+  "projectType": "api-service",
+  "projectName": "Piramyd",
+  "projectDescription": "Piramyd is an OpenAI-compatible inference gateway that routes text and chat requests to multiple upstream AI providers, with built-in web intelligence, context compaction, and tool-call integrity.",
   "theme": "luma",
-  "name": "Piramyd",
-  "colors": {
-    "primary": "#6C3CF7",
-    "light": "#8B5CF6",
-    "dark": "#4F24D1"
-  },
-  "favicon": "/favicon.svg",
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:support@piramyd.cloud"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dash.piramyd.cloud"
-    }
-  },
+  "primaryColor": "#6C3CF7",
+  "lightColor": "#8B5CF6",
+  "darkColor": "#4F24D1",
   "navigation": {
     "tabs": [
       {
@@ -109,7 +90,43 @@
       }
     ]
   },
-  "footer": {
-    "socials": {}
-  }
+  "keyFeatures": [
+    "OpenAI-compatible inference gateway with multi-provider routing",
+    "Chat completions, streaming SSE, and tool calling",
+    "Anthropic Messages API compatibility",
+    "Vision (image input) support for capable models",
+    "System One typed decision models (Jev)",
+    "SIRS: multi-engine web search via SearXNG",
+    "CROWD: URL scraping, site crawling, site mapping, structured extraction, and llms.txt generation via Firecrawl",
+    "Automatic context compaction for long conversations",
+    "Automatic tool-call argument integrity and repair during streaming",
+    "Pre-upload image hosting for large images",
+    "Three flat-rate subscription tiers with unlimited tokens"
+  ],
+  "publicApiSurface": [
+    "POST /v1/chat/completions",
+    "POST /v1/responses",
+    "POST /v1/messages",
+    "POST /v1/systemone",
+    "GET  /v1/models",
+    "GET  /v1/models/{model_id}",
+    "GET  /v1/capabilities",
+    "GET  /v1/tiers",
+    "POST /v1/search",
+    "POST /v1/scrape",
+    "POST /v1/crawl",
+    "GET  /v1/crawl/{job_id}",
+    "DELETE /v1/crawl/{job_id}",
+    "POST /v1/map",
+    "POST /v1/crowd/search",
+    "POST /v1/extract",
+    "POST /v1/llmstxt",
+    "POST /v1/images/upload",
+    "GET  /v1/images/{image_id}",
+    "POST /v1/auth/token",
+    "GET  /v1/auth/me",
+    "GET  /v1/status/runtime",
+    "GET  /v1/status/models",
+    "GET  /v1/stats/tokens"
+  ]
 }

@@ -1,0 +1,223 @@
+---
+title: "POST /v1/responses — OpenAI Responses Endpoint"
+sidebarTitle: "Responses"
+description: "POST /v1/responses — OpenAI Responses-style endpoint. Accepts string or array input, preserves multimodal content blocks, and emits structured SSE events when streaming."
+---
+
+The Responses endpoint is a compatibility layer that normalises input in the OpenAI Responses API format and routes it internally to Chat Completions. It accepts either a plain string or a structured array of message objects as `input`, making it easy to migrate existing Responses API integrations to Piramyd with no other code changes. Unlike Chat Completions, the streaming format uses named SSE events rather than generic `chat.completion.chunk` objects, and multimodal content blocks — including `input_image` — are preserved through the pipeline rather than flattened to text.
+
+<Note>
+  Discover available models via [`GET /v1/models`](/api-reference/models). Check that the model's `endpoints` array includes `/v1/responses` before sending requests to this endpoint.
+</Note>
+
+## Endpoint
+
+```
+POST https://api.piramyd.cloud/v1/responses
+```
+
+**Headers**
+
+| Header | Value |
+|--------|-------|
+| `Authorization` | `Bearer sk-<your-api-key>` |
+| `Content-Type` | `application/json` |
+| `X-Request-ID` | *(optional)* Arbitrary string — echoed back for tracing |
+
+---
+
+## Request Parameters
+
+<ParamField body="model" type="string" required>
+  The model ID to use. Retrieve valid IDs from `GET /v1/models`. Example: `gpt-5.6-luna`.
+</ParamField>
+
+<ParamField body="input" type="string | array" required>
+  The input to the model. Two formats are accepted:
+  - **String shorthand** — a bare string is treated as a single user message.
+  - **Array of message objects** — each object has a `role` (`user` or `assistant`) and a `content` field, which may itself be a string or an array of typed content blocks (e.g. `input_text`, `input_image`).
+</ParamField>
+
+<ParamField body="instructions" type="string">
+  A system prompt equivalent. Injected as the system turn before the `input` messages. Equivalent to adding `{"role": "system", "content": "..."}` at the start of the messages array in Chat Completions.
+</ParamField>
+
+<ParamField body="max_output_tokens" type="integer">
+  Maximum number of tokens to generate. Equivalent to `max_tokens` in Chat Completions.
+</ParamField>
+
+<ParamField body="stream" type="boolean" default="false">
+  Set to `true` to receive structured SSE events (see [Streaming Events](#streaming-events) below). The event format differs from Chat Completions streaming.
+</ParamField>
+
+<ParamField body="tools" type="array">
+  Tool/function definitions. Same structure as in Chat Completions. Only send to models where `supports_tools: true`.
+</ParamField>
+
+<ParamField body="tool_choice" type="string | object">
+  Controls tool selection. Accepts `"auto"`, `"none"`, `"required"`, or a specific tool object. Behaviour is identical to Chat Completions.
+</ParamField>
+
+<ParamField body="thread_id" type="string">
+  Thread identifier for automatic context compaction. Include this in multi-turn sessions to keep long conversations within the model's context window.
+</ParamField>
+
+<ParamField body="conversation_id" type="string">
+  Alias for `thread_id`. The two fields are interchangeable.
+</ParamField>
+
+---
+
+## Request Examples
+
+<CodeGroup>
+
+```python String input
+import httpx
+
+headers = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+response = httpx.post(
+    "https://api.piramyd.cloud/v1/responses",
+    headers=headers,
+    json={
+        "model": "claude-opus-4.8",
+        "input": "Explain how HTTP works.",
+        "max_output_tokens": 1000,
+        "stream": False,
+    },
+)
+
+print(response.json())
+```
+
+```python Array input
+import httpx
+
+headers = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+response = httpx.post(
+    "https://api.piramyd.cloud/v1/responses",
+    headers=headers,
+    json={
+        "model": "claude-opus-4.8",
+        "instructions": "You are a coding assistant.",
+        "input": [
+            {"role": "user", "content": "Write a fibonacci function in Python."}
+        ],
+        "max_output_tokens": 2000,
+        "stream": False,
+    },
+)
+
+print(response.json())
+```
+
+```python Multimodal input (input_image)
+import httpx
+
+headers = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+# Ensure the selected model has supports_vision: true
+response = httpx.post(
+    "https://api.piramyd.cloud/v1/responses",
+    headers=headers,
+    json={
+        "model": "gpt-5.6-luna",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "What is shown in this image?",
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": {
+                            "url": "https://example.com/photo.jpg",
+                            "detail": "auto",
+                        },
+                    },
+                ],
+            }
+        ],
+    },
+)
+
+print(response.json())
+```
+
+</CodeGroup>
+
+<Note>
+  If the selected model does not support image input (`supports_vision: false`), the API returns `400 image_input_not_supported` before contacting any upstream provider. Check the model's capabilities via `GET /v1/models` first.
+</Note>
+
+---
+
+## Streaming Events
+
+When `stream: true`, the Responses endpoint emits named SSE events in a fixed sequence. Each line is either `event: <name>` or `data: <json>`. Process them in the order they arrive.
+
+| Event | Description |
+|-------|-------------|
+| `response.created` | The response object has been created; status is `in_progress`. |
+| `response.in_progress` | Processing has begun. |
+| `response.output_item.added` | A new output item (e.g. an assistant message) has been added. |
+| `response.content_part.added` | A content part (e.g. an `output_text` block) has been added to the output item. |
+| `response.output_text.delta` | An incremental text fragment. Accumulate these to reconstruct the full text. |
+| `response.output_text.done` | The complete assembled text for this content part. |
+| `response.content_part.done` | The content part is finalised. |
+| `response.output_item.done` | The output item is finalised. |
+| `response.completed` | The response is complete. This event includes the `usage` object. |
+| *(terminator)* | `data: [DONE]` — signals end of stream; no event name. |
+
+**Example SSE stream**
+
+```
+event: response.created
+data: {"id":"resp_abc","object":"response","status":"in_progress"}
+
+event: response.in_progress
+data: {"id":"resp_abc","object":"response","status":"in_progress"}
+
+event: response.output_item.added
+data: {"type":"output_item.added","output_index":0,"item":{"type":"message","role":"assistant"}}
+
+event: response.content_part.added
+data: {"type":"content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}
+
+event: response.output_text.delta
+data: {"type":"output_text.delta","output_index":0,"content_index":0,"delta":"Here "}
+
+event: response.output_text.delta
+data: {"type":"output_text.delta","output_index":0,"content_index":0,"delta":"is the code:"}
+
+event: response.output_text.done
+data: {"type":"output_text.done","output_index":0,"content_index":0,"text":"Here is the code:..."}
+
+event: response.content_part.done
+data: {"type":"content_part.done","output_index":0,"content_index":0}
+
+event: response.output_item.done
+data: {"type":"output_item.done","output_index":0}
+
+event: response.completed
+data: {"id":"resp_abc","object":"response","status":"completed","usage":{"input_tokens":20,"output_tokens":150,"total_tokens":170}}
+
+data: [DONE]
+```
+
+---
+
+## Manual Context Compaction
+
+You can trigger the same context-compaction pass that runs automatically on long threads by calling:
+
+```
+POST https://api.piramyd.cloud/v1/responses/compact
+```
+
+Pass the same `thread_id` (or `conversation_id`) and `model` fields. This is useful if you want to compact a thread proactively before a large request rather than waiting for an automatic trigger.

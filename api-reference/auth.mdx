@@ -1,0 +1,250 @@
+---
+title: "Authentication Endpoints — Login, Profile, and OAuth"
+sidebarTitle: "Auth"
+description: "POST /v1/auth/token and related endpoints for account authentication. Get a JWT, refresh tokens, manage your profile, and link OAuth providers."
+---
+
+These endpoints handle account management: logging in, viewing your profile, rotating tokens, verifying your email, and linking OAuth providers. They are distinct from inference — **you do not use a JWT to call models**. API keys for inference (`sk-...`) are created and managed in the [Piramyd dashboard](https://dash.piramyd.cloud).
+
+<Note>
+  There is **no public account registration endpoint**. Accounts are created at [dash.piramyd.cloud](https://dash.piramyd.cloud) through the onboarding flow — not via the API. All endpoints below require an existing account.
+</Note>
+
+## Endpoint Reference
+
+| Method   | Path                                          | Auth Required | Purpose                                              |
+|----------|-----------------------------------------------|---------------|------------------------------------------------------|
+| `POST`   | `/v1/auth/token`                              | None          | Login with username/email + password, returns JWT    |
+| `GET`    | `/v1/auth/me`                                 | JWT           | Current user profile                                 |
+| `DELETE` | `/v1/auth/me`                                 | JWT           | Delete your own account                              |
+| `POST`   | `/v1/auth/refresh`                            | JWT           | Rotate refresh token, returns new token pair         |
+| `POST`   | `/v1/auth/logout`                             | JWT           | Revoke your refresh token                            |
+| `POST`   | `/v1/auth/email-verification/send-code`       | JWT           | Send an email verification code to your address      |
+| `POST`   | `/v1/auth/email-verification/verify-code`     | JWT           | Verify your email using the sent code                |
+| `GET`    | `/v1/auth/oauth/{provider}/start`             | None          | Start an OAuth sign-in flow (e.g. `github`)          |
+| `GET`    | `/v1/auth/oauth/{provider}/connect/start`     | JWT           | Link an OAuth provider to your existing account      |
+| `GET`    | `/v1/auth/oauth/{provider}/callback`          | None          | OAuth redirect callback                              |
+| `POST`   | `/v1/auth/oauth/exchange`                     | None          | Exchange an OAuth authorization code for tokens      |
+
+---
+
+## POST /v1/auth/token
+
+Exchange your credentials for a JWT access token and refresh token. This is your entry point for all subsequent account management calls.
+
+**Base URL:** `https://api.piramyd.cloud`
+
+### Request Body
+
+<ParamField body="username_or_email" type="string" required>
+  Your account username or the email address registered at dash.piramyd.cloud.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Your account password.
+</ParamField>
+
+### Response
+
+<ResponseField name="access_token" type="string">
+  A short-lived JWT. Pass this as `Authorization: Bearer <access_token>` on all account management requests.
+</ResponseField>
+
+<ResponseField name="refresh_token" type="string">
+  A longer-lived token. Use it with `POST /v1/auth/refresh` to obtain a new token pair without re-entering your password.
+</ResponseField>
+
+<ResponseField name="token_type" type="string">
+  Always `"bearer"`.
+</ResponseField>
+
+### Example
+
+```python
+import httpx
+
+resp = httpx.post(
+    "https://api.piramyd.cloud/v1/auth/token",
+    json={
+        "username_or_email": "you@example.com",
+        "password": "your-password",
+    },
+)
+
+data = resp.json()
+access_token = data["access_token"]
+refresh_token = data["refresh_token"]
+
+print(f"Token type: {data['token_type']}")
+print(f"Access token: {access_token[:20]}...")
+```
+
+```bash
+curl -s -X POST https://api.piramyd.cloud/v1/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username_or_email": "you@example.com", "password": "your-password"}'
+```
+
+---
+
+## GET /v1/auth/me
+
+Returns the profile for the currently authenticated account. Use this to confirm token validity or retrieve account details such as your user ID, email, and verification status.
+
+**Base URL:** `https://api.piramyd.cloud`
+
+### Headers
+
+<ParamField header="Authorization" type="string" required>
+  `Bearer <access_token>` — the JWT obtained from `POST /v1/auth/token`.
+</ParamField>
+
+### Example
+
+```python
+import httpx
+
+access_token = "eyJ..."  # from /v1/auth/token
+
+resp = httpx.get(
+    "https://api.piramyd.cloud/v1/auth/me",
+    headers={"Authorization": f"Bearer {access_token}"},
+)
+
+profile = resp.json()
+print(profile)
+```
+
+```bash
+curl -s https://api.piramyd.cloud/v1/auth/me \
+  -H "Authorization: Bearer eyJ..."
+```
+
+---
+
+## DELETE /v1/auth/me
+
+Permanently deletes your account. This action is irreversible — all associated data, including API keys, will be removed.
+
+<Warning>
+  Deleting your account cannot be undone. All API keys tied to the account will be invalidated immediately. Make sure you have migrated any active integrations before proceeding.
+</Warning>
+
+**Base URL:** `https://api.piramyd.cloud`
+
+### Headers
+
+<ParamField header="Authorization" type="string" required>
+  `Bearer <access_token>` — JWT from `POST /v1/auth/token`.
+</ParamField>
+
+---
+
+## POST /v1/auth/refresh
+
+Rotate your token pair. Submit your current refresh token to receive a new `access_token` and `refresh_token`. The old refresh token is revoked after a successful call.
+
+**Base URL:** `https://api.piramyd.cloud`
+
+### Request Body
+
+<ParamField body="refresh_token" type="string" required>
+  The refresh token returned by `POST /v1/auth/token` or a previous `POST /v1/auth/refresh` call.
+</ParamField>
+
+### Response
+
+<ResponseField name="access_token" type="string">
+  A new short-lived JWT.
+</ResponseField>
+
+<ResponseField name="refresh_token" type="string">
+  A new refresh token. Store this and discard the old one immediately.
+</ResponseField>
+
+<ResponseField name="token_type" type="string">
+  Always `"bearer"`.
+</ResponseField>
+
+### Example
+
+```python
+import httpx
+
+resp = httpx.post(
+    "https://api.piramyd.cloud/v1/auth/refresh",
+    json={"refresh_token": "your-current-refresh-token"},
+)
+
+tokens = resp.json()
+new_access_token = tokens["access_token"]
+new_refresh_token = tokens["refresh_token"]
+```
+
+---
+
+## POST /v1/auth/logout
+
+Revoke the current refresh token, ending the session. The access token will continue to work until it expires naturally, but it can no longer be refreshed.
+
+**Base URL:** `https://api.piramyd.cloud`
+
+### Headers
+
+<ParamField header="Authorization" type="string" required>
+  `Bearer <access_token>` — JWT from `POST /v1/auth/token`.
+</ParamField>
+
+---
+
+## Email Verification
+
+### POST /v1/auth/email-verification/send-code
+
+Sends a verification code to the email address on your account. Call this when your account email shows as unverified.
+
+### POST /v1/auth/email-verification/verify-code
+
+Submit the code you received to mark your email as verified.
+
+<ParamField body="code" type="string" required>
+  The verification code from the email sent by `/send-code`.
+</ParamField>
+
+Both endpoints require `Authorization: Bearer <access_token>`.
+
+---
+
+## OAuth
+
+Piramyd supports OAuth-based sign-in and account linking. Replace `{provider}` with a supported provider slug such as `github`.
+
+### GET /v1/auth/oauth/{provider}/start
+
+Redirects your user to the OAuth provider's authorization page to begin a sign-in flow. No auth required — redirect your browser or user agent to this URL.
+
+### GET /v1/auth/oauth/{provider}/connect/start
+
+Same as `/start` but **links** the OAuth provider to an **existing** account rather than creating a new session. Requires `Authorization: Bearer <access_token>`.
+
+### GET /v1/auth/oauth/{provider}/callback
+
+The redirect target registered with the OAuth provider. The API handles the callback and exchanges the authorization code internally. You typically do not call this directly.
+
+### POST /v1/auth/oauth/exchange
+
+Exchange an OAuth authorization code for a Piramyd token pair. Use this in server-side or native OAuth flows where you handle the callback yourself.
+
+<ParamField body="code" type="string" required>
+  The authorization code returned by the OAuth provider.
+</ParamField>
+
+<ParamField body="provider" type="string" required>
+  The OAuth provider slug (e.g. `github`).
+</ParamField>
+
+---
+
+<Tip>
+  For inference requests — calling models via `/v1/chat/completions`, `/v1/responses`, or any other model endpoint — use your **API key** (`sk-...`), not a JWT. JWTs are only accepted on `/v1/auth/...` account management endpoints. Create and manage API keys at [dash.piramyd.cloud](https://dash.piramyd.cloud).
+</Tip>

@@ -1,0 +1,190 @@
+---
+title: "Send Images to Vision-Capable Models"
+sidebarTitle: "Vision"
+description: "Pass image URLs or base64-encoded images in your chat messages to vision-capable models on Piramyd. Use the image upload endpoint to avoid base64 payload size limits."
+---
+
+Vision on Piramyd means sending images to a model so it can read, describe, analyse, or reason about the visual content — not generating new images. You attach images to your chat messages as structured content blocks, and the model processes them alongside your text. Piramyd validates vision support before forwarding the request, so you never pay for a round trip to an upstream provider that doesn't support image input.
+
+<Note>
+Piramyd does **not** generate images. `POST /v1/images/generations` does not exist and returns `404`. If your pipeline requires image generation, use a dedicated image provider for that step and Piramyd for the text and reasoning parts.
+</Note>
+
+## Check Vision Support
+
+Before sending image content, confirm the model you've chosen has `supports_vision: true` in the `GET /v1/models` response. If you send image content to a model that doesn't support it, the API returns `400 image_input_not_supported` without contacting the upstream provider.
+
+```python
+import httpx
+
+models = httpx.get(
+    "https://api.piramyd.cloud/v1/models",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+).json()
+
+vision_models = [
+    m for m in models["data"]
+    if m.get("supports_vision")
+]
+model_id = vision_models[0]["id"]
+```
+
+## Inline Image URL
+
+Replace the `content` string in a user message with an array of content blocks. Use `type: "text"` for the text part and `type: "image_url"` for the image. The `detail` field controls how much detail the model examines — `"auto"` is a sensible default.
+
+<CodeGroup>
+
+```python Python
+import httpx
+
+response = httpx.post(
+    "https://api.piramyd.cloud/v1/chat/completions",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    json={
+        "model": "claude-opus-4.8",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What's in this image?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.com/photo.jpg",
+                            "detail": "auto",
+                        },
+                    },
+                ],
+            }
+        ],
+        "max_tokens": 1000,
+    },
+)
+print(response.json()["choices"][0]["message"]["content"])
+```
+
+```bash curl
+curl https://api.piramyd.cloud/v1/chat/completions \
+  -H "Authorization: Bearer sk-YOUR_PIRAMYD_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-opus-4.8",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "What'\''s in this image?"},
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://example.com/photo.jpg",
+              "detail": "auto"
+            }
+          }
+        ]
+      }
+    ],
+    "max_tokens": 1000
+  }'
+```
+
+</CodeGroup>
+
+The `detail` field accepts three values:
+
+| Value | Behaviour |
+|-------|-----------|
+| `"auto"` | Piramyd/upstream provider chooses based on image size |
+| `"low"` | Fixed lower-resolution analysis; fewer tokens consumed |
+| `"high"` | Full-resolution analysis; more tokens consumed |
+
+## Pre-Uploading Images
+
+For large images or clients with slow uplinks, embedding a base64-encoded image directly in the request body inflates payload size significantly. Instead, upload the image once to Piramyd's image storage and pass the returned URL — the upstream AI provider fetches it directly, keeping your request body small.
+
+<Warning>
+Uploaded images expire after **1 hour**. Upload immediately before the inference call; do not cache the returned URL for later use.
+</Warning>
+
+### Upload the image
+
+Send a multipart `POST /v1/images/upload` request with the file in the `file` field. Accepted formats: `image/png`, `image/jpeg`, `image/webp`, `image/gif`. Maximum size: 20 MB.
+
+```python
+import httpx
+
+with open("screenshot.png", "rb") as f:
+    upload_resp = httpx.post(
+        "https://api.piramyd.cloud/v1/images/upload",
+        headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+        files={"file": ("screenshot.png", f, "image/png")},
+    )
+
+upload = upload_resp.json()
+# {
+#   "url": "https://api.piramyd.cloud/v1/images/abcdef0123456789abcdef0123456789",
+#   "bytes": 48213,
+#   "content_type": "image/png",
+#   "object": "image_upload"
+# }
+image_url = upload["url"]
+```
+
+The returned URL is public and unauthenticated — `GET /v1/images/{image_id}` serves the raw bytes with no API key required, so upstream AI providers can fetch the image directly.
+
+### Use the URL in your inference call
+
+Pass the returned URL exactly as you would any other image URL:
+
+```python
+response = httpx.post(
+    "https://api.piramyd.cloud/v1/chat/completions",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    json={
+        "model": "claude-opus-4.8",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe the UI layout in this screenshot."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_url, "detail": "high"},
+                    },
+                ],
+            }
+        ],
+        "max_tokens": 2000,
+    },
+)
+print(response.json()["choices"][0]["message"]["content"])
+```
+
+## Responses Endpoint Vision
+
+The `POST /v1/responses` endpoint supports vision through `type: "input_image"` content blocks inside the `input` array. The responses endpoint preserves multimodal content blocks rather than flattening them to text.
+
+```json
+{
+  "model": "gpt-5.6-luna",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {"type": "input_text", "text": "What is shown in this image?"},
+        {
+          "type": "input_image",
+          "image_url": {
+            "url": "https://example.com/photo.jpg",
+            "detail": "auto"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+The same model selection and `supports_vision` check applies — if the chosen model doesn't support image input, the API returns `400 image_input_not_supported` before the request reaches the upstream provider.

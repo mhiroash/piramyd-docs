@@ -1,0 +1,413 @@
+---
+title: "POST /v1/chat/completions — Chat Completions API"
+sidebarTitle: "Chat Completions"
+description: "POST /v1/chat/completions — the primary OpenAI-compatible inference endpoint. Supports streaming, tool calling, vision, and all OpenAI-compatible parameters."
+---
+
+The Chat Completions endpoint is the primary way to run inference on Piramyd. It is fully OpenAI-compatible — any code that already calls `POST /v1/chat/completions` against OpenAI's API will work against Piramyd with only a `base_url` change. The endpoint supports multi-turn conversations, tool/function calling, vision inputs, streaming via Server-Sent Events, and automatic context compaction for long threads.
+
+<Note>
+  Never hardcode a model ID. Always discover available models at runtime via [`GET /v1/models`](/api-reference/models) and select one whose `endpoints` array includes `/v1/chat/completions`.
+</Note>
+
+## Endpoint
+
+```
+POST https://api.piramyd.cloud/v1/chat/completions
+```
+
+**Headers**
+
+| Header | Value |
+|--------|-------|
+| `Authorization` | `Bearer sk-<your-api-key>` |
+| `Content-Type` | `application/json` |
+| `X-Request-ID` | *(optional)* Arbitrary string — echoed back for tracing |
+
+---
+
+## Request Parameters
+
+<ParamField body="model" type="string" required>
+  The ID of the model to use. Retrieve the live catalog from `GET /v1/models` and use a model whose `endpoints` array includes `/v1/chat/completions`. Example: `claude-opus-4.8`.
+</ParamField>
+
+<ParamField body="messages" type="array" required>
+  The conversation history as an array of message objects. Each message has a `role` (`system`, `user`, `assistant`, or `tool`) and a `content` field. For multimodal messages, `content` may be an array of content parts (see Vision example below).
+</ParamField>
+
+<ParamField body="temperature" type="float" default="0.7">
+  Sampling temperature between `0` and `2`. Lower values produce more focused, deterministic output; higher values produce more varied output. Use `0` for tasks that require consistent, reproducible responses.
+</ParamField>
+
+<ParamField body="max_tokens" type="integer" default="4096">
+  Maximum number of tokens to generate in the response. Set this explicitly — do not rely on the default when using tool calling with large arguments. Must not exceed the model's `max_output_tokens` from the catalog.
+</ParamField>
+
+<ParamField body="max_completion_tokens" type="integer">
+  Alias for `max_tokens`, introduced in the newer OpenAI format. Use either; they are equivalent. If both are provided, `max_completion_tokens` takes precedence.
+</ParamField>
+
+<ParamField body="stream" type="boolean" default="false">
+  Set to `true` to receive the response as a stream of Server-Sent Events (SSE). Each chunk is a partial `chat.completion.chunk` object. The stream ends with `data: [DONE]`.
+</ParamField>
+
+<ParamField body="stream_options" type="object">
+  Additional options for streaming. Pass `{"include_usage": true}` to receive a final usage chunk after the last content chunk and before `[DONE]`. Only meaningful when `stream` is `true`.
+</ParamField>
+
+<ParamField body="tools" type="array">
+  An array of tool definitions the model may call. Each tool has a `type` of `"function"` and a `function` object with `name`, `description`, and a JSON Schema `parameters`. Only send this field to models where `supports_tools: true` in the model catalog.
+</ParamField>
+
+<ParamField body="tool_choice" type="string | object" default="auto">
+  Controls whether and how the model calls tools:
+  - `"auto"` — the model decides (default when tools are present)
+  - `"none"` — the model will not call any tool
+  - `"required"` — the model must call at least one tool
+  - `{"type": "function", "function": {"name": "..."}}` — force a specific tool
+</ParamField>
+
+<ParamField body="thread_id" type="string">
+  An opaque string identifying the conversation thread. Providing this enables **automatic context compaction**: when the conversation approaches the model's context limit, earlier messages are summarised transparently so the thread can continue indefinitely. See [Context Compaction](/concepts/context-compaction) for details.
+</ParamField>
+
+<ParamField body="conversation_id" type="string">
+  Alias for `thread_id`. You may use either field; they are interchangeable.
+</ParamField>
+
+<ParamField body="n" type="integer" default="1">
+  Number of completion choices to generate. Most upstream providers return exactly one completion regardless of this value; set to `1` for reliable behaviour.
+</ParamField>
+
+<ParamField body="seed" type="integer">
+  An integer seed for deterministic sampling. Support depends on the upstream model. Pass the same seed and request to get reproducible outputs.
+</ParamField>
+
+<ParamField body="user" type="string">
+  An opaque string representing the end-user making the request. Used for abuse tracking and is passed through to upstream providers that support it.
+</ParamField>
+
+---
+
+## Request Examples
+
+<CodeGroup>
+
+```python Basic request
+import httpx
+
+client = httpx.Client(base_url="https://api.piramyd.cloud/v1")
+headers = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+response = client.post(
+    "/chat/completions",
+    headers=headers,
+    json={
+        "model": "claude-opus-4.8",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Explain quantum computing in simple terms."},
+        ],
+        "temperature": 0.7,
+        "max_tokens": 4096,
+        "stream": False,
+    },
+)
+
+print(response.json()["choices"][0]["message"]["content"])
+```
+
+```python Streaming request
+import httpx
+
+headers = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+with httpx.stream(
+    "POST",
+    "https://api.piramyd.cloud/v1/chat/completions",
+    headers=headers,
+    json={
+        "model": "claude-opus-4.8",
+        "messages": [
+            {"role": "user", "content": "Write a Python function to sort a list."}
+        ],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    },
+) as r:
+    for line in r.iter_lines():
+        if line.startswith("data: ") and line != "data: [DONE]":
+            import json
+            chunk = json.loads(line[6:])
+            delta = chunk["choices"][0]["delta"] if chunk.get("choices") else {}
+            if delta.get("content"):
+                print(delta["content"], end="", flush=True)
+```
+
+```python Tool calling request
+import httpx, json
+
+headers = {"Authorization": "Bearer sk-YOUR_KEY"}
+BASE = "https://api.piramyd.cloud/v1"
+
+# 1. First turn — model decides to call a tool
+resp = httpx.post(
+    f"{BASE}/chat/completions",
+    headers=headers,
+    json={
+        "model": "claude-opus-4.8",
+        "messages": [
+            {"role": "system", "content": "You can call tools when needed."},
+            {"role": "user", "content": "What's the weather in Lisbon?"},
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get current weather for a city",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "city": {"type": "string", "description": "City name"}
+                        },
+                        "required": ["city"],
+                    },
+                },
+            }
+        ],
+        "tool_choice": "auto",
+        "stream": False,
+    },
+)
+
+tool_call = resp.json()["choices"][0]["message"]["tool_calls"][0]
+call_id = tool_call["id"]
+args = json.loads(tool_call["function"]["arguments"])
+
+# 2. Execute the tool locally
+weather_result = {"temperature": 22, "condition": "sunny"}
+
+# 3. Second turn — submit the tool result
+resp2 = httpx.post(
+    f"{BASE}/chat/completions",
+    headers=headers,
+    json={
+        "model": "claude-opus-4.8",
+        "messages": [
+            {"role": "system", "content": "You can call tools when needed."},
+            {"role": "user", "content": "What's the weather in Lisbon?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [tool_call],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": json.dumps(weather_result),
+            },
+        ],
+        "stream": False,
+    },
+)
+
+print(resp2.json()["choices"][0]["message"]["content"])
+```
+
+```python Vision request
+import httpx
+
+headers = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+# Only send images to models where supports_vision: true
+response = httpx.post(
+    "https://api.piramyd.cloud/v1/chat/completions",
+    headers=headers,
+    json={
+        "model": "claude-opus-4.8",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What's in this image?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.com/photo.jpg",
+                            "detail": "auto",
+                        },
+                    },
+                ],
+            }
+        ],
+        "max_tokens": 1000,
+    },
+)
+
+print(response.json()["choices"][0]["message"]["content"])
+```
+
+</CodeGroup>
+
+---
+
+## Non-Streaming Response
+
+When `stream` is `false`, the API returns a single `chat.completion` object.
+
+<ResponseField name="id" type="string">
+  Unique identifier for this completion, prefixed with `chatcmpl-`.
+</ResponseField>
+
+<ResponseField name="object" type="string">
+  Always `"chat.completion"` for non-streaming responses.
+</ResponseField>
+
+<ResponseField name="created" type="integer">
+  Unix timestamp (seconds) when the completion was created.
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  The exact model ID that generated the response. May differ from what you requested if an alias was used.
+</ResponseField>
+
+<ResponseField name="choices" type="array">
+  Array of completion choices. Contains one element unless you requested `n > 1`.
+
+  <Expandable title="choices[i] fields">
+    <ResponseField name="choices[i].index" type="integer">
+      Zero-based index of this choice.
+    </ResponseField>
+
+    <ResponseField name="choices[i].message" type="object">
+      The assistant message generated by the model.
+
+      <Expandable title="message fields">
+        <ResponseField name="choices[i].message.role" type="string">
+          Always `"assistant"`.
+        </ResponseField>
+
+        <ResponseField name="choices[i].message.content" type="string | null">
+          The text content of the response. `null` when the model made a tool call instead of producing text.
+        </ResponseField>
+
+        <ResponseField name="choices[i].message.tool_calls" type="array | null">
+          Present when `finish_reason` is `"tool_calls"`. Each element has `id`, `type` (`"function"`), and a `function` object with `name` and `arguments` (a JSON-encoded string).
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+
+    <ResponseField name="choices[i].finish_reason" type="string">
+      Why the model stopped generating:
+      - `"stop"` — natural end of output
+      - `"length"` — hit `max_tokens` / `max_completion_tokens`
+      - `"tool_calls"` — the model is requesting one or more tool calls
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  Token counts for this request.
+
+  <Expandable title="usage fields">
+    <ResponseField name="usage.prompt_tokens" type="integer">
+      Number of tokens in the input (system + user messages).
+    </ResponseField>
+
+    <ResponseField name="usage.completion_tokens" type="integer">
+      Number of tokens generated in the response.
+    </ResponseField>
+
+    <ResponseField name="usage.total_tokens" type="integer">
+      Sum of `prompt_tokens` and `completion_tokens`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Example non-streaming response**
+
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1712345678,
+  "model": "claude-opus-4.8",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Quantum computing uses quantum-mechanical phenomena..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 25,
+    "completion_tokens": 100,
+    "total_tokens": 125
+  }
+}
+```
+
+---
+
+## Streaming Response
+
+When `stream: true`, the API sends a series of SSE chunks, each prefixed with `data: `. The stream ends with `data: [DONE]`.
+
+Each chunk is a `chat.completion.chunk` object:
+
+<ResponseField name="id" type="string">
+  Shared across all chunks for this completion.
+</ResponseField>
+
+<ResponseField name="object" type="string">
+  Always `"chat.completion.chunk"`.
+</ResponseField>
+
+<ResponseField name="choices[i].delta" type="object">
+  The incremental content for this chunk. On the first chunk, `delta.role` is `"assistant"`. Subsequent chunks carry `delta.content` with text fragments. The final content chunk has an empty `delta` and `finish_reason` set.
+</ResponseField>
+
+<ResponseField name="choices[i].finish_reason" type="string | null">
+  `null` on all chunks except the last, which carries `"stop"`, `"length"`, or `"tool_calls"`.
+</ResponseField>
+
+<ResponseField name="usage" type="object | null">
+  Present only on the final usage-only chunk (after `finish_reason` is set) when you pass `stream_options: {"include_usage": true}`. Contains `prompt_tokens`, `completion_tokens`, and `total_tokens`.
+</ResponseField>
+
+**Example SSE stream**
+
+```
+data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Here"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" is"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":85,"total_tokens":97}}
+
+data: [DONE]
+```
+
+<Note>
+  When `finish_reason` is `"tool_calls"` in a stream, accumulate all `delta.tool_calls[i].function.arguments` fragments before parsing the JSON. The API provides automatic tool call integrity protection — you will always receive complete, valid JSON by the time the stream ends.
+</Note>
+
+---
+
+## Legacy Endpoints
+
+<ResponseField name="POST /v1/completions" type="endpoint">
+  The legacy OpenAI completions endpoint. Accepts a `prompt` string (not a `messages` array) and returns a single text continuation. Use `/v1/chat/completions` for all new integrations.
+</ResponseField>
+
+<ResponseField name="POST /v1/moderations" type="endpoint">
+  Present for SDK compatibility only. Currently returns `501 not_implemented`. **Do not rely on this endpoint for safety filtering.**
+</ResponseField>

@@ -1,0 +1,284 @@
+---
+title: "GET /v1/capabilities — API Compatibility Matrix"
+sidebarTitle: "Capabilities"
+description: "GET /v1/capabilities returns an API-level compatibility matrix showing which features Piramyd supports. Use it to check endpoint availability at runtime."
+---
+
+Before writing integration code that depends on a specific API feature — streaming, usage reporting in streams, legacy completions — call `GET /v1/capabilities` to verify the feature is live in the environment you're targeting. The endpoint returns a flat compatibility object you can interrogate programmatically, making it a reliable runtime guard against assumptions about what the gateway supports.
+
+---
+
+## GET /v1/capabilities
+
+Returns an API-level compatibility matrix for the Piramyd gateway. No authentication is required — call it before you have a key, from a health check, or from an integration test.
+
+**Authentication:** None (public endpoint)
+
+### Response shape
+
+```json
+{
+  "service": "piramyd-api",
+  "api_version": "v1",
+  "compatibility": {
+    "chat_completions": true,
+    "responses_compat": true,
+    "responses_native_events": true,
+    "legacy_completions": true,
+    "moderations": false,
+    "streaming_sse": true,
+    "stream_include_usage": true,
+    "max_completion_tokens": true,
+    "request_id_header": true
+  }
+}
+```
+
+### Response fields
+
+<ResponseField name="service" type="string">
+  Always `"piramyd-api"`. Use this to confirm you are talking to the Piramyd
+  gateway and not a passthrough or proxy.
+</ResponseField>
+
+<ResponseField name="api_version" type="string">
+  The active API version — currently `"v1"`. Use this to detect version
+  upgrades in long-running integrations.
+</ResponseField>
+
+<ResponseField name="compatibility" type="object">
+  Map of feature flags. Each key represents an API capability; the boolean
+  value indicates whether that capability is currently available.
+</ResponseField>
+
+### Compatibility flags
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `chat_completions` | boolean | `POST /v1/chat/completions` is available — the primary OpenAI-compatible inference endpoint. |
+| `responses_compat` | boolean | `POST /v1/responses` is available — the OpenAI Responses-style compatibility endpoint. |
+| `responses_native_events` | boolean | The responses endpoint emits structured SSE lifecycle events (`response.created`, `response.output_text.delta`, etc.) rather than raw chat chunks. |
+| `legacy_completions` | boolean | `POST /v1/completions` is available — the older prompt-string (non-messages) format for legacy SDK compatibility. |
+| `moderations` | boolean | `POST /v1/moderations` is available. Currently `false` — the endpoint returns `501 not_implemented`. Do not rely on it for content safety filtering. |
+| `streaming_sse` | boolean | Server-Sent Event streaming is supported via `"stream": true` on inference requests. |
+| `stream_include_usage` | boolean | Token usage is included in streamed responses when `"stream_options": {"include_usage": true}` is set. |
+| `max_completion_tokens` | boolean | The `max_completion_tokens` parameter is accepted as an alias for `max_tokens` (OpenAI newer format). |
+| `request_id_header` | boolean | The gateway echoes the `X-Request-ID` header you send, enabling end-to-end request tracing. |
+
+<Note>
+  A `false` value means the feature is not currently available — not that it
+  will never exist. Check `GET /v1/capabilities` at startup rather than
+  assuming flags are stable between deployments.
+</Note>
+
+### Check capabilities at startup
+
+<CodeGroup>
+
+```python Python
+import httpx
+import sys
+
+BASE = "https://api.piramyd.cloud/v1"
+
+
+def check_capabilities(required: list[str]) -> dict:
+    """
+    Fetch the capabilities matrix and assert that every required
+    feature is available. Raises RuntimeError if any are missing.
+    """
+    resp = httpx.get(f"{BASE}/capabilities")
+    resp.raise_for_status()
+    payload = resp.json()
+
+    compat = payload["compatibility"]
+    missing = [feat for feat in required if not compat.get(feat)]
+
+    if missing:
+        raise RuntimeError(
+            f"Required capabilities not available: {missing}\n"
+            f"Full matrix: {compat}"
+        )
+
+    return compat
+
+
+# Guard at startup — fail fast if the gateway doesn't support streaming
+# or tool-call usage reporting
+try:
+    caps = check_capabilities([
+        "chat_completions",
+        "streaming_sse",
+        "stream_include_usage",
+    ])
+    print(f"Gateway ready — api_version={caps.get('api_version', 'unknown')}")
+except RuntimeError as exc:
+    print(f"Startup check failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+```
+
+```typescript TypeScript
+const BASE = "https://api.piramyd.cloud/v1";
+
+interface Capabilities {
+  service: string;
+  api_version: string;
+  compatibility: Record<string, boolean>;
+}
+
+async function checkCapabilities(required: string[]): Promise<Capabilities["compatibility"]> {
+  const resp = await fetch(`${BASE}/capabilities`);
+  if (!resp.ok) throw new Error(`Capabilities check failed: ${resp.status}`);
+
+  const payload: Capabilities = await resp.json();
+  const compat = payload.compatibility;
+
+  const missing = required.filter((feat) => !compat[feat]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Required capabilities not available: ${missing.join(", ")}`
+    );
+  }
+
+  return compat;
+}
+
+// Guard at startup
+const caps = await checkCapabilities([
+  "chat_completions",
+  "streaming_sse",
+  "stream_include_usage",
+]);
+console.log("Gateway ready:", caps);
+```
+
+</CodeGroup>
+
+---
+
+## Public Status Endpoints
+
+Piramyd exposes several no-auth status and statistics endpoints. Use them in health probes, dashboards, and integration monitors without provisioning a key.
+
+### GET /v1/status/runtime
+
+Returns active node count, active model count, and gateway uptime. Useful for lightweight health checks in infrastructure monitoring.
+
+**Authentication:** None
+
+### GET /v1/status/models
+
+Returns per-model health status, refreshed every 5 minutes. Check this endpoint to detect upstream provider degradations before sending inference requests.
+
+**Authentication:** None
+
+**Example response (abbreviated):**
+
+```json
+{
+  "models": [
+    {
+      "id": "claude-opus-4.8",
+      "status": "healthy",
+      "latency_p50_ms": 420,
+      "latency_p99_ms": 1840,
+      "last_checked": "2025-01-15T10:42:00Z"
+    },
+    {
+      "id": "gpt-5.6",
+      "status": "degraded",
+      "latency_p50_ms": 980,
+      "latency_p99_ms": 4500,
+      "last_checked": "2025-01-15T10:42:00Z"
+    }
+  ],
+  "refreshed_at": "2025-01-15T10:42:00Z"
+}
+```
+
+<Tip>
+  Poll `GET /v1/status/models` in your model-selection logic to skip models
+  with a `"degraded"` or `"unavailable"` status before you commit to a
+  request. Combine with the capability flags from `supports_tools` and
+  `supports_vision` in `GET /v1/models` for a fully runtime-driven routing
+  strategy.
+</Tip>
+
+### GET /v1/stats/tokens
+
+Returns global public token totals across all users and models. No authentication required.
+
+**Authentication:** None
+
+### GET /v1/stats/tokens/leaderboard
+
+Returns global token totals broken down per model, plus anonymized top-user statistics. Useful for understanding which models are most active on the platform.
+
+**Authentication:** None
+
+### GET /health
+
+Performs a full gateway health check including circuit breaker status. Returns a structured object indicating whether each internal subsystem (routing, upstream providers, web intelligence services) is operational.
+
+**Authentication:** None
+
+Use `GET /health` — rather than a model inference call — as your readiness probe in container orchestration environments. It's fast, free, and gives you circuit breaker state alongside the basic up/down signal.
+
+<CodeGroup>
+
+```python Python
+import httpx
+
+BASE = "https://api.piramyd.cloud"
+
+def is_gateway_healthy() -> bool:
+    try:
+        resp = httpx.get(f"{BASE}/health", timeout=5)
+        return resp.status_code == 200
+    except httpx.RequestError:
+        return False
+
+def get_model_health() -> dict:
+    resp = httpx.get(f"{BASE}/v1/status/models", timeout=10)
+    resp.raise_for_status()
+    return {m["id"]: m["status"] for m in resp.json().get("models", [])}
+
+# Quick startup sanity check
+if not is_gateway_healthy():
+    raise RuntimeError("Piramyd gateway is not reachable")
+
+model_statuses = get_model_health()
+healthy_models = [mid for mid, status in model_statuses.items() if status == "healthy"]
+print(f"{len(healthy_models)} healthy model(s) available")
+```
+
+```typescript TypeScript
+const BASE = "https://api.piramyd.cloud";
+
+async function isGatewayHealthy(): Promise<boolean> {
+  try {
+    const resp = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(5000) });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function getHealthyModelIds(): Promise<string[]> {
+  const resp = await fetch(`${BASE}/v1/status/models`);
+  if (!resp.ok) throw new Error(`Status check failed: ${resp.status}`);
+  const { models } = await resp.json();
+  return (models as any[])
+    .filter((m) => m.status === "healthy")
+    .map((m) => m.id);
+}
+
+if (!(await isGatewayHealthy())) {
+  throw new Error("Piramyd gateway is not reachable");
+}
+
+const healthyIds = await getHealthyModelIds();
+console.log(`${healthyIds.length} healthy model(s):`, healthyIds);
+```
+
+</CodeGroup>

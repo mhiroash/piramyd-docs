@@ -1,0 +1,121 @@
+---
+title: "POST /v1/map — Discover Site URLs with CROWD"
+sidebarTitle: "Map"
+description: "POST /v1/map — quickly discover all URLs on a website without fetching content. Ideal for understanding site structure before targeting specific pages to scrape or crawl."
+---
+
+`POST /v1/map` discovers all accessible URLs on a website without fetching or extracting content from any of them. It is dramatically faster than a full crawl because it only traverses the link graph — no page content is downloaded or parsed. Use it to understand the structure of a site before deciding which URLs to scrape individually or pass to `POST /v1/crawl`. An optional `search` filter lets you narrow the returned list to URLs whose path or query string contains a specific keyword.
+
+<Tip>
+  Run `POST /v1/map` before `POST /v1/crawl`. Map the full site, filter the links to the sections you care about, then pass those paths as `include_paths` to a targeted crawl. This avoids wasting credits on irrelevant pages.
+</Tip>
+
+## Endpoint
+
+```
+POST https://api.piramyd.cloud/v1/map
+```
+
+**Authentication:** `Authorization: Bearer sk-<key>`
+
+---
+
+## Request Parameters
+
+<ParamField body="url" type="string" required>
+  Root URL of the site to map. The mapper follows links discovered from this starting point, staying within the same domain.
+</ParamField>
+
+<ParamField body="search" type="string">
+  Optional keyword filter. Only URLs whose full URL string contains this value are returned. For example, `"library"` would keep `https://docs.python.org/3/library/ast.html` but drop `https://docs.python.org/3/tutorial/index.html`.
+</ParamField>
+
+<ParamField body="limit" type="integer" default="5000">
+  Maximum number of URLs to return. Accepted range: **1–5000**.
+</ParamField>
+
+---
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  `true` if the site was mapped successfully.
+</ResponseField>
+
+<ResponseField name="links" type="string[]">
+  Array of discovered URLs on the site, filtered by `search` if provided and capped at `limit`.
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Number of URLs returned in `links`.
+</ResponseField>
+
+---
+
+## Code Example
+
+<CodeGroup>
+
+```python Python
+import httpx
+
+PIRAMYD_KEY = "sk-YOUR_KEY"
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": f"Bearer {PIRAMYD_KEY}"}
+
+# Map the site, filtering to library pages only
+resp = httpx.post(
+    f"{BASE}/map",
+    headers=HEADERS,
+    json={
+        "url": "https://docs.python.org/3/",
+        "search": "library",
+        "limit": 500,
+    },
+    timeout=60,
+)
+resp.raise_for_status()
+
+data = resp.json()
+print(f"Found {data['total']} matching URLs")
+
+for url in data["links"][:10]:
+    print(f"  {url}")
+```
+
+```json Example request body
+{
+  "url": "https://docs.python.org/3/",
+  "search": "library",
+  "limit": 500
+}
+```
+
+```json Example response
+{
+  "success": true,
+  "links": [
+    "https://docs.python.org/3/library/ast.html",
+    "https://docs.python.org/3/library/asyncio.html",
+    "https://docs.python.org/3/library/collections.html"
+  ],
+  "total": 3
+}
+```
+
+</CodeGroup>
+
+---
+
+## Errors
+
+| Error code | HTTP status | Description |
+|---|---|---|
+| `map_timeout` | 504 | The mapping operation timed out. Retry with backoff or reduce the scope via `limit`. |
+| `map_upstream_error` | 502 | CROWD encountered an upstream error while traversing the site. Retry with backoff. |
+| `map_unavailable` | 502 | The CROWD service is temporarily unavailable. Retry with backoff. |
+| `map_internal_error` | 500 | Unexpected internal error. Retry with backoff. |
+
+<Note>
+  All error responses follow the standard Piramyd error shape: `{ "error": { "message": "...", "type": "...", "code": "..." } }`. Retry `502`, `504`, and `500` with exponential backoff (base 1 s, max 8 s, with jitter).
+</Note>

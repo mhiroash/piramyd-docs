@@ -1,0 +1,236 @@
+---
+title: "Function and Tool Calling with Piramyd"
+sidebarTitle: "Tool Calling"
+description: "Use tool calling with Piramyd to build AI agents that can invoke functions. Piramyd automatically ensures complete, valid JSON arguments even during streaming."
+---
+
+Tool calling lets you describe functions to the model and have it decide when and how to invoke them. Instead of generating free-form text, the model emits a structured `tool_calls` object with the function name and arguments it wants to call. Your code executes the function, then submits the result back so the model can continue. This pattern is the foundation of most AI agents.
+
+## Check Model Support
+
+Not every model supports tool calling. Before sending `tools` in your request, check that the model's `supports_tools` field is `true` in the `GET /v1/models` response. Sending tool definitions to a model that doesn't support them returns a `400` error.
+
+```python
+import httpx
+
+models = httpx.get(
+    "https://api.piramyd.cloud/v1/models",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+).json()
+
+tool_models = [
+    m for m in models["data"]
+    if m.get("supports_tools") and "/v1/chat/completions" in m.get("endpoints", [])
+]
+model_id = tool_models[0]["id"]
+```
+
+## Define Tools
+
+Pass a `tools` array in your request body. Each entry has `type: "function"` and a `function` object with a `name`, `description`, and a JSON Schema `parameters` definition.
+
+```json
+{
+  "model": "claude-opus-4.8",
+  "messages": [
+    {"role": "system", "content": "You can call tools when needed."},
+    {"role": "user", "content": "What's the weather in Lisbon?"}
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get current weather for a city",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {"type": "string", "description": "City name"}
+          },
+          "required": ["city"]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto"
+}
+```
+
+Set `tool_choice` to control whether and how the model uses tools:
+
+| Value | Behaviour |
+|-------|-----------|
+| `"auto"` (default) | Model decides whether to call a tool or respond in text |
+| `"none"` | Tool definitions are ignored; model always responds in text |
+| `"required"` | Model must call at least one tool |
+| `{"type": "function", "function": {"name": "get_weather"}}` | Model must call the named function |
+
+## Full Tool Calling Loop
+
+A complete agent loop has four steps.
+
+<Steps>
+
+### Send the request with tools defined
+
+```python
+import httpx, json
+
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"}
+
+messages = [
+    {"role": "system", "content": "You can call tools when needed."},
+    {"role": "user", "content": "What's the weather in Lisbon?"},
+]
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get current weather for a city",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string", "description": "City name"}
+                },
+                "required": ["city"],
+            },
+        },
+    }
+]
+
+resp = httpx.post(
+    f"{BASE}/chat/completions",
+    headers=HEADERS,
+    json={"model": "claude-opus-4.8", "messages": messages, "tools": tools, "tool_choice": "auto"},
+)
+result = resp.json()
+```
+
+### Parse tool calls from the response
+
+When the model wants to call a function, `finish_reason` is `"tool_calls"` and the `tool_calls` array is populated:
+
+```python
+choice = result["choices"][0]
+
+if choice["finish_reason"] == "tool_calls":
+    assistant_message = choice["message"]
+    tool_calls = assistant_message["tool_calls"]
+    # Append the assistant message to maintain conversation history
+    messages.append(assistant_message)
+```
+
+The assistant message looks like this:
+
+```json
+{
+  "role": "assistant",
+  "content": null,
+  "tool_calls": [
+    {
+      "id": "call_abc123",
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "arguments": "{\"city\": \"Lisbon\"}"
+      }
+    }
+  ]
+}
+```
+
+### Execute the function locally
+
+```python
+def get_weather(city: str) -> dict:
+    # Your real implementation here
+    return {"temperature": 22, "condition": "sunny"}
+
+for tc in tool_calls:
+    fn_name = tc["function"]["name"]
+    fn_args = json.loads(tc["function"]["arguments"])
+
+    if fn_name == "get_weather":
+        fn_result = get_weather(**fn_args)
+    else:
+        fn_result = {"error": "unknown function"}
+```
+
+### Submit the tool result
+
+Add a message with `role: "tool"`, the matching `tool_call_id`, and the result serialized as a string:
+
+```python
+    messages.append({
+        "role": "tool",
+        "tool_call_id": tc["id"],
+        "content": json.dumps(fn_result),
+    })
+
+# Send the updated conversation back
+final_resp = httpx.post(
+    f"{BASE}/chat/completions",
+    headers=HEADERS,
+    json={"model": "claude-opus-4.8", "messages": messages},
+)
+print(final_resp.json()["choices"][0]["message"]["content"])
+```
+
+</Steps>
+
+## Streaming Tool Calls
+
+When `stream: true` is set, `function.arguments` arrives as a stream of string fragments across multiple chunks. Accumulate every fragment before calling `json.loads` — do not parse intermediate chunks.
+
+```python
+tool_calls_buffer = {}
+
+with client.chat.completions.stream(
+    model="claude-opus-4.8",
+    messages=messages,
+    tools=tools,
+) as stream:
+    for chunk in stream:
+        for tc in (chunk.choices[0].delta.tool_calls or []):
+            idx = tc.index
+            if idx not in tool_calls_buffer:
+                tool_calls_buffer[idx] = {
+                    "id": tc.id,
+                    "name": tc.function.name or "",
+                    "arguments": "",
+                }
+            tool_calls_buffer[idx]["arguments"] += tc.function.arguments or ""
+
+# Only parse after the stream completes
+for tc in tool_calls_buffer.values():
+    args = json.loads(tc["arguments"])  # always valid — Piramyd auto-repairs
+    print(tc["name"], args)
+```
+
+Piramyd's automatic [tool call integrity](/concepts/tool-call-integrity) buffers argument deltas server-side, repairs any truncated JSON, and handles continuation if the model hits `max_tokens` mid-call. You always receive complete, valid JSON — no custom repair logic needed on your side.
+
+## Parameters Reference
+
+**`tool_choice` values**
+
+| Value | Type | Description |
+|-------|------|-------------|
+| `"auto"` | string | Default. Model chooses whether to call a tool. |
+| `"none"` | string | Forces text-only response; tools are ignored. |
+| `"required"` | string | Model must invoke at least one tool. |
+| `{"type": "function", "function": {"name": "..."}}` | object | Forces a specific function to be called. |
+
+**`finish_reason` values related to tool calls**
+
+| Value | Meaning |
+|-------|---------|
+| `"tool_calls"` | The model returned one or more tool calls; no text content. |
+| `"stop"` | Normal text completion; no tool call was made. |
+| `"length"` | Hit `max_tokens`; Piramyd auto-continues mid-call when possible. |
+
+<Tip>
+Check `supports_tools: true` on a model before defining any tools, and always verify `finish_reason` before trying to parse `tool_calls`. For deeper context on how Piramyd handles large argument payloads during streaming, see the [Tool Call Integrity](/concepts/tool-call-integrity) concept page.
+</Tip>

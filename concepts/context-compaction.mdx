@@ -1,0 +1,108 @@
+---
+title: "Automatic Context Compaction for Long Conversations"
+sidebarTitle: "Context Compaction"
+description: "Piramyd automatically compacts long conversation histories when they exceed a model's context window, keeping your multi-turn conversations running without errors."
+---
+
+As conversations grow, message histories eventually exceed a model's context window — causing requests to fail with `context_length_exceeded`. Piramyd's context compaction feature solves this transparently: when your conversation approaches the limit, the API automatically summarizes older messages into a structured summary and retries the request, so your application never sees the error.
+
+## How It Works
+
+To enable context compaction, include a `thread_id` (or its alias `conversation_id`) in every request that belongs to the same conversation:
+
+```json
+{
+  "model": "claude-opus-4.8",
+  "messages": [...],
+  "thread_id": "my-conversation-123",
+  "stream": true
+}
+```
+
+Once `thread_id` is present, Piramyd handles the rest automatically:
+
+1. **Detection** — if the accumulated messages would produce a `context_length_exceeded` error, the API intercepts it before returning it to your client.
+2. **Compaction** — older messages are summarized into a structured block covering:
+   - **Goals** — what the user is trying to achieve
+   - **Plans** — approaches agreed upon or in progress
+   - **Decisions** — choices made during the conversation
+   - **Files** — any files referenced or created
+   - **Tool state** — previous tool call results relevant to ongoing tasks
+   - **Blockers** — unresolved issues or open questions
+3. **Preservation** — system messages are kept intact and verbatim. The most recent messages are also preserved without modification, ensuring the model has full fidelity on the immediate context.
+4. **Retry** — the compacted history is used to transparently retry the original request. Your client receives the response as if no compaction occurred.
+5. **Checkpointing** — compaction state is persisted in Redis. On subsequent requests in the same thread, the API proactively applies compaction if a checkpoint exists, rather than waiting for the context window to overflow.
+
+### Using thread\_id in a Request
+
+<CodeGroup>
+
+```python Python
+import httpx
+
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": "Bearer sk-YOUR_KEY"}
+
+response = httpx.post(
+    f"{BASE}/chat/completions",
+    headers=HEADERS,
+    json={
+        "model": "claude-opus-4.8",
+        "messages": [
+            {"role": "system", "content": "You are a helpful coding assistant."},
+            {"role": "user", "content": "Let's refactor the authentication module."},
+        ],
+        "thread_id": "project-alpha-session-42",
+        "max_tokens": 4096,
+        "stream": False,
+    },
+)
+print(response.json()["choices"][0]["message"]["content"])
+```
+
+```javascript JavaScript
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: "sk-YOUR_KEY",
+  baseURL: "https://api.piramyd.cloud/v1",
+});
+
+const response = await client.chat.completions.create({
+  model: "claude-opus-4.8",
+  messages: [
+    { role: "system", content: "You are a helpful coding assistant." },
+    { role: "user", content: "Let's refactor the authentication module." },
+  ],
+  // @ts-ignore — Piramyd extension field
+  thread_id: "project-alpha-session-42",
+  max_tokens: 4096,
+});
+
+console.log(response.choices[0].message.content);
+```
+
+</CodeGroup>
+
+---
+
+## Manual Compaction
+
+If you want to trigger compaction explicitly — for example, to pre-compact a long conversation before starting a new leg of work — use the manual compaction endpoint:
+
+```http
+POST /v1/responses/compact
+Authorization: Bearer sk-YOUR_KEY
+```
+
+This runs the same compaction pass that automatic compaction uses. Pass your messages array in the request body; the response returns the compacted history you can use in your next request.
+
+---
+
+<Note>
+  **System One models do not support context compaction.** System One (e.g. `jev-latest`) has a hard 64,000-token limit per request covering the state and all questions. There is no automatic compaction for System One requests — if your input exceeds the limit, you will receive a `413 context_too_large` error. Reduce the size of the `state` field instead.
+</Note>
+
+<Tip>
+  Always include `thread_id` for multi-turn agentic workloads. Even if your conversations are short today, adding `thread_id` from the start means you get incremental compaction checkpoints automatically as conversations grow — no code changes required later.
+</Tip>

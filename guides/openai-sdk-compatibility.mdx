@@ -1,0 +1,103 @@
+---
+title: "Use Piramyd as a Drop-In OpenAI SDK Replacement"
+sidebarTitle: "OpenAI Compatibility"
+description: "Piramyd is fully OpenAI-compatible. Change base_url to https://api.piramyd.cloud/v1 in your existing OpenAI SDK code and it works immediately."
+---
+
+Piramyd implements the OpenAI REST API specification, which means any code you've already written against the OpenAI Python or JavaScript SDK works against Piramyd without modification — you only need to point the client at a different base URL and swap in your Piramyd API key. You gain access to models from multiple upstream providers (Anthropic, OpenAI, and others) through a single, familiar interface.
+
+<CodeGroup>
+
+```python Python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="sk-YOUR_PIRAMYD_KEY",
+    base_url="https://api.piramyd.cloud/v1",
+)
+
+response = client.chat.completions.create(
+    model="claude-opus-4.8",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+
+print(response.choices[0].message.content)
+```
+
+```typescript TypeScript / JavaScript
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: "sk-YOUR_PIRAMYD_KEY",
+  baseURL: "https://api.piramyd.cloud/v1",
+});
+
+const response = await client.chat.completions.create({
+  model: "claude-opus-4.8",
+  messages: [{ role: "user", content: "Hello!" }],
+});
+
+console.log(response.choices[0].message.content);
+```
+
+</CodeGroup>
+
+## What's Compatible
+
+Piramyd supports the following OpenAI-compatible endpoints and features:
+
+| Endpoint | Details |
+|----------|---------|
+| `POST /v1/chat/completions` | Full compatibility — messages, tools, vision, streaming, all standard parameters |
+| `POST /v1/completions` | Legacy completions endpoint (`prompt` string, not `messages`) |
+| `POST /v1/moderations` | Present for SDK compatibility only — currently returns `501 not_implemented`. **Do not rely on this endpoint for safety filtering.** |
+| `GET /v1/models` | Full model catalog with capability metadata |
+
+In addition to the endpoints above, the following features are fully supported:
+
+- **Streaming SSE** — set `stream: true` on any chat completions request
+- **`stream_options: {include_usage: true}`** — receive token counts in the final streaming chunk
+- **Tool calling** — define functions and let the model decide when to invoke them
+- **Vision** — pass image URLs or base64-encoded images in message content arrays
+
+## Model IDs
+
+Piramyd's catalog changes as new models are added and deprecated. Rather than hardcoding a model ID that may become unavailable, always discover models at runtime using `GET /v1/models`.
+
+```python
+import httpx
+
+models = httpx.get(
+    "https://api.piramyd.cloud/v1/models",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+).json()
+
+for model in models["data"]:
+    print(model["id"], model.get("supports_tools"), model.get("supports_vision"))
+```
+
+**Model ID normalization** — Piramyd accepts model IDs in multiple formats and resolves them to the same model. All three of the following are equivalent:
+
+```
+claude-opus-4.8
+Claude-Sonnet-4-6
+anthropic/claude-opus-4.8
+```
+
+The API normalizes IDs case-insensitively and accepts provider-prefixed as well as OpenRouter-style IDs. Use whatever format your tooling produces.
+
+## Compatibility Redirects
+
+A small set of non-versioned paths redirect with HTTP `307` (preserving the POST body) to their `/v1/` counterparts:
+
+| Source | Target |
+|--------|--------|
+| `POST /chat/completions` | `POST /v1/chat/completions` |
+| `POST /search` | `POST /v1/search` |
+| `POST /fetch` | `POST /v1/fetch` |
+
+These redirects exist for convenience only. Always call `/v1/` paths directly in production code — relying on redirects adds an unnecessary round trip.
+
+<Tip>
+Call `GET /v1/models` at application startup and cache the result for the lifetime of your process. Check `supports_tools`, `supports_vision`, and `context_length` before building requests — these fields vary by model and can save you a wasted inference call.
+</Tip>

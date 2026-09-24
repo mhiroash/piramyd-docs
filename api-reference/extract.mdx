@@ -1,0 +1,226 @@
+---
+title: "POST /v1/extract — LLM Structured Data Extraction"
+sidebarTitle: "Extract"
+description: "POST /v1/extract — use an LLM to extract structured data from up to 20 URLs. Describe what to extract in natural language and optionally enforce output shape with JSON Schema."
+---
+
+`POST /v1/extract` fetches up to 20 URLs, passes their content to an LLM, and returns structured data matching your description. Tell the extraction model what you want in plain English via `prompt`, and optionally provide a `schema` (JSON Schema) to enforce the exact shape of the output. This eliminates the need to manually scrape pages, parse HTML, and write custom extraction logic — the LLM handles it. For large or complex extractions, the endpoint may return immediately with `status: "processing"` and a `job_id` to poll.
+
+## Endpoint
+
+```
+POST https://api.piramyd.cloud/v1/extract
+```
+
+**Authentication:** `Authorization: Bearer sk-<key>`
+
+---
+
+## Request Parameters
+
+<ParamField body="urls" type="string[]" required>
+  Array of URLs to extract data from. Maximum **20 URLs** per request.
+</ParamField>
+
+<ParamField body="prompt" type="string" required>
+  Natural-language description of what to extract. Be specific — for example: `"Extract the top 5 story titles, their URLs, and point counts"`.
+</ParamField>
+
+<ParamField body="schema" type="object">
+  JSON Schema object that describes the expected structure of `data` in the response. When provided, the extraction LLM is instructed to conform its output to this shape. Omit for free-form extraction.
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "stories": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "url":   { "type": "string" },
+            "points": { "type": "integer" }
+          }
+        }
+      }
+    }
+  }
+  ```
+</ParamField>
+
+<ParamField body="system_prompt" type="string">
+  Custom system prompt for the extraction LLM. Use this to adjust tone, add domain context, or provide additional instructions beyond the `prompt`.
+</ParamField>
+
+<ParamField body="allow_external_links" type="boolean" default="false">
+  When `true`, the extraction process may follow external links found on the provided URLs to gather additional context.
+</ParamField>
+
+<ParamField body="timeout_seconds" type="integer" default="60">
+  Maximum time in seconds to wait for extraction to complete synchronously. Accepted range: **10–120**. Requests that exceed this may return `status: "processing"` — poll with `job_id` in that case.
+</ParamField>
+
+---
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  `true` if the extraction request was accepted and completed (or queued) without error.
+</ResponseField>
+
+<ResponseField name="job_id" type="string">
+  Unique identifier for this extraction job. Present on all responses — use it to poll if `status` is `"processing"`.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Extraction status. Either `"completed"` (data is ready in this response) or `"processing"` (poll `job_id` until complete).
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Extracted data. Shape matches the provided `schema` when one is specified. `null` or absent when `status` is `"processing"`.
+</ResponseField>
+
+<ResponseField name="error" type="string | null">
+  Error message if extraction failed, otherwise `null`.
+</ResponseField>
+
+---
+
+## Code Example
+
+<CodeGroup>
+
+```python Python
+import httpx
+import time
+
+PIRAMYD_KEY = "sk-YOUR_KEY"
+BASE = "https://api.piramyd.cloud/v1"
+HEADERS = {"Authorization": f"Bearer {PIRAMYD_KEY}"}
+
+resp = httpx.post(
+    f"{BASE}/extract",
+    headers=HEADERS,
+    json={
+        "urls": ["https://news.ycombinator.com"],
+        "prompt": "Extract the top 5 story titles, their URLs, and point counts",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "stories": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title":  {"type": "string"},
+                            "url":    {"type": "string"},
+                            "points": {"type": "integer"},
+                        },
+                    },
+                }
+            },
+        },
+        "timeout_seconds": 60,
+    },
+    timeout=70,
+)
+resp.raise_for_status()
+result = resp.json()
+
+# Handle async case
+if result["status"] == "processing":
+    job_id = result["job_id"]
+    print(f"Extraction queued as {job_id}, polling...")
+    while result["status"] == "processing":
+        time.sleep(5)
+        poll = httpx.get(f"{BASE}/extract/{job_id}", headers=HEADERS)
+        result = poll.json()
+
+# Print results
+for story in result["data"]["stories"]:
+    print(f"[{story['points']} pts] {story['title']}")
+    print(f"  {story['url']}")
+```
+
+```json Example request body
+{
+  "urls": ["https://news.ycombinator.com"],
+  "prompt": "Extract the top 5 story titles, their URLs, and point counts",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "stories": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title":  { "type": "string" },
+            "url":    { "type": "string" },
+            "points": { "type": "integer" }
+          }
+        }
+      }
+    }
+  },
+  "timeout_seconds": 60
+}
+```
+
+```json Example response (completed)
+{
+  "success": true,
+  "job_id": "extract_xyz789",
+  "status": "completed",
+  "data": {
+    "stories": [
+      {
+        "title": "Show HN: We built a fully local LLM pipeline",
+        "url": "https://github.com/example/project",
+        "points": 312
+      },
+      {
+        "title": "The economics of open-source AI",
+        "url": "https://example.com/article",
+        "points": 287
+      }
+    ]
+  },
+  "error": null
+}
+```
+
+</CodeGroup>
+
+---
+
+## Async Behavior
+
+Large or multi-URL extractions may not complete within `timeout_seconds`. When this happens, the API returns immediately with `status: "processing"` and a `job_id`:
+
+```json
+{
+  "success": true,
+  "job_id": "extract_xyz789",
+  "status": "processing",
+  "data": null,
+  "error": null
+}
+```
+
+Poll `GET /v1/extract/{job_id}` (using your API key) at a reasonable interval (every 5–10 seconds) until `status` changes to `"completed"` or `"failed"`. The completed response has the same shape as a synchronous result.
+
+<Note>
+  To minimize the chance of hitting async mode, keep your URL list small (3–5 URLs) and set a generous `timeout_seconds` (90–120). For bulk extraction workloads, batch your URLs across multiple requests rather than submitting all 20 at once.
+</Note>
+
+---
+
+## Errors
+
+| Error code | HTTP status | Description |
+|---|---|---|
+| `extract_timeout` | 504 | Extraction did not complete within the timeout. Retry with a longer `timeout_seconds` or poll the `job_id`. |
+| `extract_upstream_error` | 502 | CROWD or the extraction LLM returned an upstream error. Retry with backoff. |
+| `extract_unavailable` | 502 | The extraction service is temporarily unavailable. Retry with backoff. |
+| `extract_internal_error` | 500 | Unexpected internal error. Retry with backoff. |
