@@ -1,10 +1,10 @@
 ---
-title: "POST /v1/responses — OpenAI Responses Endpoint"
+title: "OpenAI Responses API Reference — POST /v1/responses"
 sidebarTitle: "Responses"
-description: "POST /v1/responses — OpenAI Responses-style endpoint. Accepts string or array input, preserves multimodal content blocks, and emits structured SSE events when streaming."
+description: "OpenAI Responses-compatible endpoint. Accepts string or array input, multimodal input_image blocks, and named SSE streaming events."
 ---
 
-The Responses endpoint is a compatibility layer that normalises input in the OpenAI Responses API format and routes it internally to Chat Completions. It accepts either a plain string or a structured array of message objects as `input`, making it easy to migrate existing Responses API integrations to Piramyd with no other code changes. Unlike Chat Completions, the streaming format uses named SSE events rather than generic `chat.completion.chunk` objects, and multimodal content blocks — including `input_image` — are preserved through the pipeline rather than flattened to text.
+The Responses endpoint is an OpenAI Responses-compatible interface that accepts either a plain string or a structured array of message objects as `input`. It is the easiest migration path for existing Responses API integrations — change only the `base_url` to `https://api.piramyd.cloud/v1` and your request and response code continues to work unchanged. Unlike Chat Completions, streaming uses named SSE events rather than generic `chat.completion.chunk` objects, and multimodal content blocks including `input_image` are preserved rather than flattened to text.
 
 <Note>
   Discover available models via [`GET /v1/models`](/api-reference/models). Check that the model's `endpoints` array includes `/v1/responses` before sending requests to this endpoint.
@@ -44,6 +44,10 @@ POST https://api.piramyd.cloud/v1/responses
 
 <ParamField body="max_output_tokens" type="integer">
   Maximum number of tokens to generate. Equivalent to `max_tokens` in Chat Completions.
+</ParamField>
+
+<ParamField body="temperature" type="float" default="0.7">
+  Sampling temperature between `0` and `2`. Lower values produce more focused, deterministic output; higher values produce more varied output. Behaves identically to the `temperature` parameter in Chat Completions.
 </ParamField>
 
 <ParamField body="stream" type="boolean" default="false">

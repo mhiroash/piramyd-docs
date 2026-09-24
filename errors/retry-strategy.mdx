@@ -1,7 +1,7 @@
 ---
 title: "Retry Strategy and Resilience Patterns for Piramyd"
 sidebarTitle: "Retry Strategy"
-description: "Learn which Piramyd errors to retry and how to implement exponential backoff with jitter for 429, 502, 503, and 504 responses."
+description: "Learn which Piramyd error codes are retryable and how to implement exponential backoff with jitter, honouring Retry-After for 429 and 503 responses."
 ---
 
 Not every error from Piramyd warrants a retry — some indicate a problem with your request that no amount of waiting will fix, while others are transient conditions that resolve on their own within seconds. Build your integration to distinguish between the two from the start, and you will avoid wasting quota on futile retries while recovering automatically from the errors that are genuinely recoverable.

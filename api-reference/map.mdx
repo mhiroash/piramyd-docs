@@ -1,7 +1,7 @@
 ---
-title: "POST /v1/map — Discover Site URLs with CROWD"
+title: "Discover All Website URLs — POST /v1/map via CROWD"
 sidebarTitle: "Map"
-description: "POST /v1/map — quickly discover all URLs on a website without fetching content. Ideal for understanding site structure before targeting specific pages to scrape or crawl."
+description: "POST /v1/map — discover all URLs on a site without fetching content. Understand site structure before targeting pages to scrape or crawl."
 ---
 
 `POST /v1/map` discovers all accessible URLs on a website without fetching or extracting content from any of them. It is dramatically faster than a full crawl because it only traverses the link graph — no page content is downloaded or parsed. Use it to understand the structure of a site before deciding which URLs to scrape individually or pass to `POST /v1/crawl`. An optional `search` filter lets you narrow the returned list to URLs whose path or query string contains a specific keyword.

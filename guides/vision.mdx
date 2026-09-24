@@ -1,7 +1,7 @@
 ---
-title: "Send Images to Vision-Capable Models"
+title: "Vision: Using Image Inputs with Piramyd API Models"
 sidebarTitle: "Vision"
-description: "Pass image URLs or base64-encoded images in your chat messages to vision-capable models on Piramyd. Use the image upload endpoint to avoid base64 payload size limits."
+description: "Send image URLs or pre-uploaded images to vision-capable models on Piramyd. Covers inline image_url, the upload endpoint, and Responses input_image format."
 ---
 
 Vision on Piramyd means sending images to a model so it can read, describe, analyse, or reason about the visual content — not generating new images. You attach images to your chat messages as structured content blocks, and the model processes them alongside your text. Piramyd validates vision support before forwarding the request, so you never pay for a round trip to an upstream provider that doesn't support image input.

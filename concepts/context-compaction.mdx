@@ -1,7 +1,7 @@
 ---
 title: "Automatic Context Compaction for Long Conversations"
 sidebarTitle: "Context Compaction"
-description: "Piramyd automatically compacts long conversation histories when they exceed a model's context window, keeping your multi-turn conversations running without errors."
+description: "Piramyd automatically compacts long conversation histories when they approach a model's context window, so multi-turn sessions run without interruption."
 ---
 
 As conversations grow, message histories eventually exceed a model's context window — causing requests to fail with `context_length_exceeded`. Piramyd's context compaction feature solves this transparently: when your conversation approaches the limit, the API automatically summarizes older messages into a structured summary and retries the request, so your application never sees the error.
@@ -95,7 +95,36 @@ POST /v1/responses/compact
 Authorization: Bearer sk-YOUR_KEY
 ```
 
-This runs the same compaction pass that automatic compaction uses. Pass your messages array in the request body; the response returns the compacted history you can use in your next request.
+This runs the same compaction pass that automatic compaction uses. Pass your `messages` array in the request body; the response returns the compacted history you can drop directly into your next request.
+
+**Request**
+
+```json
+{
+  "model": "claude-opus-4.8",
+  "messages": [
+    { "role": "system", "content": "You are a helpful coding assistant." },
+    { "role": "user", "content": "Let's start refactoring the auth module." },
+    { "role": "assistant", "content": "Sure, I'll begin by reviewing the existing structure..." }
+  ]
+}
+```
+
+**Response**
+
+```json
+{
+  "compacted_messages": [
+    { "role": "system", "content": "You are a helpful coding assistant." },
+    {
+      "role": "user",
+      "content": "CONVERSATION SUMMARY:\n- Goals: Refactor the auth module\n- Plans: Review existing structure first\n- Decisions: None yet\n- Files: None\n- Tool state: None\n- Blockers: None"
+    }
+  ]
+}
+```
+
+Use `compacted_messages` as the `messages` array in your next request.
 
 ---
 

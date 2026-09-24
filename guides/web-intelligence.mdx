@@ -1,10 +1,10 @@
 ---
-title: "Web Search, Scraping, and Crawling with Piramyd"
+title: "Web Search, Scraping, and Crawling with the Piramyd API"
 sidebarTitle: "Web Intelligence"
 description: "Piramyd bundles SIRS (multi-engine web search) and CROWD (scraping, crawling, extraction) as first-class API endpoints — no separate services needed."
 ---
 
-Piramyd ships two self-hosted web intelligence services alongside its inference endpoints, and both are accessible with your existing API key. **SIRS** (powered by SearXNG) handles multi-engine web search. **CROWD** (powered by Firecrawl) handles single-URL scraping, full-site crawling, structured extraction, and more. You don't need separate accounts, separate SDKs, or separate billing — one key unlocks everything.
+Piramyd ships two self-hosted web intelligence services alongside its inference endpoints, and both are accessible with your existing API key. **SIRS** handles multi-engine web search. **CROWD** handles single-URL scraping, full-site crawling, structured data extraction, and more. You don't need separate accounts, separate SDKs, or separate billing — one key unlocks everything.
 
 ## SIRS — Web Search
 
@@ -65,7 +65,7 @@ for result in resp.json()["results"]:
 ```
 
 <Tip>
-When you need page content alongside search results, use `POST /v1/crowd/search` instead. It runs the search and scrapes each result in a single Firecrawl-native pipeline, which is faster and more reliable than enabling `include_content` on `/v1/search`.
+When you need page content alongside search results, use `POST /v1/crowd/search` instead. It runs the search and scrapes each result in a single pipeline call, which is faster and more reliable than enabling `include_content` on `/v1/search`.
 </Tip>
 
 ---
@@ -127,7 +127,7 @@ print(resp.json()["data"]["markdown"][:500])
 
 ### `POST /v1/crowd/search`
 
-Run a web search and automatically scrape the full content of every result in a single call. This is Firecrawl's native search-and-scrape pipeline — prefer it over `POST /v1/search` with `include_content: true` when you need enriched results.
+Run a web search and automatically scrape the full content of every result in a single call. Prefer this over `POST /v1/search` with `include_content: true` when you need enriched results — CROWD's native pipeline is faster and more reliable.
 
 **Request fields**
 
@@ -137,7 +137,7 @@ Run a web search and automatically scrape the full content of every result in a 
 | `limit` | integer | `5` | No | Max results (1–20) |
 | `language` | string | `null` | No | Language filter (`"en"`, `"pt"`, etc.) |
 | `timeout_ms` | integer | `30000` | No | Timeout (5000–60000 ms) |
-| `scrape_options` | object | `{"formats":["markdown"]}` | No | Firecrawl scrape options applied to each result |
+| `scrape_options` | object | `{"formats":["markdown"]}` | No | CROWD scrape options applied to each result |
 
 ```python
 resp = httpx.post(
@@ -281,9 +281,37 @@ Call `POST /v1/map` before `POST /v1/crawl` on large sites. Inspect the URL list
 
 ### `POST /v1/extract`
 
-Use an LLM to extract structured data from up to 20 URLs simultaneously. Describe what you want in `prompt` and optionally enforce output shape with a JSON Schema in `schema`. Large extractions may return `status: "processing"` with a `job_id` for polling.
+Use an LLM to extract structured data from up to 20 URLs simultaneously. Describe what you want in `prompt` and optionally enforce output shape with a JSON Schema in `schema`. Large extractions return `status: "processing"` with a `job_id` you can poll; small ones complete synchronously.
 
-See the [API reference for `/v1/extract`](/api-reference/extract) for the full parameter list and response shape.
+```python
+extract_resp = httpx.post(
+    "https://api.piramyd.cloud/v1/extract",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    json={
+        "urls": ["https://news.ycombinator.com"],
+        "prompt": "Extract the top 5 story titles, their URLs, and point counts",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "stories": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "url": {"type": "string"},
+                            "points": {"type": "integer"},
+                        },
+                    },
+                }
+            },
+        },
+    },
+)
+print(extract_resp.json()["data"])
+```
+
+**Key fields:** `urls` (max 20), `prompt` (required), `schema` (optional JSON Schema), `system_prompt`, `allow_external_links`, `timeout_seconds` (10–120s).
 
 ---
 
@@ -291,9 +319,19 @@ See the [API reference for `/v1/extract`](/api-reference/extract) for the full p
 
 ### `POST /v1/llmstxt`
 
-Generate an [`llms.txt`](https://llmstxt.org/) file for any website — a structured plain-text document of the site's content optimised for injection into an LLM context window.
+Generate an [`llms.txt`](https://llmstxt.org/) file for any website — a structured plain-text document of the site's content optimised for injection into an LLM context window. Set `show_full_text: true` to also receive a `llmsfulltxt` field with complete page content.
 
-See the [API reference for `/v1/llmstxt`](/api-reference/llmstxt) for full details.
+```python
+resp = httpx.post(
+    "https://api.piramyd.cloud/v1/llmstxt",
+    headers={"Authorization": "Bearer sk-YOUR_PIRAMYD_KEY"},
+    json={"url": "https://docs.piramyd.cloud", "max_urls": 30},
+    timeout=90,
+)
+print(resp.json()["llmstxt"])
+```
+
+**Key fields:** `url` (required), `max_urls` (1–100, default 10), `show_full_text` (default false), `timeout_seconds` (10–120s).
 
 ---
 

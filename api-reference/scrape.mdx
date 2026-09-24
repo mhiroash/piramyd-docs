@@ -1,10 +1,10 @@
 ---
 title: "POST /v1/scrape — Single URL Content Extraction (CROWD)"
 sidebarTitle: "Scrape"
-description: "POST /v1/scrape — extract clean content from a single URL via CROWD (Firecrawl). Returns markdown, HTML, links, or a screenshot optimized for LLM injection."
+description: "POST /v1/scrape — extract clean content from a URL via CROWD. Returns markdown, HTML, links, or a screenshot optimized for LLM injection."
 ---
 
-CROWD is Piramyd's self-hosted content extraction service, powered by Firecrawl at `crawl.piramyd.cloud`. Use `POST /v1/scrape` to fetch a single URL and receive its content in one or more output formats — markdown (stripped and cleaned for LLM injection), raw HTML, a list of all discovered links, or a rendered screenshot. By default, navigation bars, headers, footers, and other boilerplate are removed, leaving only the main page content.
+CROWD is Piramyd's self-hosted content extraction service, powered by Firecrawl. Use `POST /v1/scrape` to fetch a single URL and receive its content in one or more output formats — markdown (stripped and cleaned for LLM injection), raw HTML, a list of all discovered links, or a rendered screenshot. By default, navigation bars, headers, footers, and other boilerplate are removed, leaving only the main page content.
 
 <Note>
   The legacy alias `POST /v1/fetch` (and the unversioned `POST /fetch`) redirects with HTTP 307 to `POST /v1/scrape`, preserving the request body. Use `/v1/scrape` directly in new integrations.

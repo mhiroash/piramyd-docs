@@ -1,7 +1,7 @@
 ---
-title: "Rate Limits and Request Quotas on Piramyd"
+title: "Piramyd API Rate Limits, Tiers, and Request Quotas"
 sidebarTitle: "Rate Limits"
-description: "Piramyd rate limits are per API key, measured in requests per minute (RPM). Tokens are unlimited on paid plans. Learn limits by tier and how to handle 429 responses."
+description: "Piramyd enforces per-key RPM limits, not token limits. Compare tier allowances, learn to buy extra RPM, and handle 429 responses correctly."
 ---
 
 Piramyd measures throughput in **requests per minute (RPM)** — not tokens. On every paid plan, token usage is completely unlimited; the only constraint on how much you can generate is how many requests per minute your tier allows. Rate limits are enforced per API key, so if you need to run multiple workloads simultaneously, each key is tracked independently.

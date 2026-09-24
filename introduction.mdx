@@ -1,7 +1,7 @@
 ---
-title: "What is Piramyd? AI Inference Gateway Overview"
+title: "Piramyd Overview: AI Inference Gateway and Features"
 sidebarTitle: "Introduction"
-description: "Piramyd is an OpenAI-compatible inference gateway that routes AI requests to OpenAI, Anthropic, and other providers through a single unified API with web intelligence built in."
+description: "Learn what Piramyd is: an OpenAI-compatible gateway routing requests to OpenAI, Anthropic, and more with built-in web intelligence and flat-rate pricing."
 ---
 
 Piramyd is an AI inference gateway that gives you a single, OpenAI-compatible API endpoint for routing requests to OpenAI, Anthropic, and other upstream providers. Whether you're building a production application, an AI agent, or just experimenting, Piramyd eliminates the complexity of managing multiple provider SDKs, credentials, and rate limits. Every feature — from streaming chat completions and tool calling to live web search and full-site crawling — is available through one consistent interface under `https://api.piramyd.cloud/v1`.
@@ -41,6 +41,7 @@ Use the `/v1` prefix for all production integrations. The internal services (`se
 
 | URL | Purpose |
 |-----|---------|
+| `https://api.piramyd.cloud` | API root |
 | `https://api.piramyd.cloud/v1` | Versioned API root — use this in all clients |
 | `https://api.piramyd.cloud/docs` | Interactive OpenAPI explorer |
 | `https://api.piramyd.cloud/health` | Health check and circuit-breaker status |

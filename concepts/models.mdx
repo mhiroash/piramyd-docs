@@ -1,7 +1,7 @@
 ---
-title: "Discover and Select Models on Piramyd"
+title: "Model Discovery and Selection — Piramyd API Reference"
 sidebarTitle: "Models"
-description: "Piramyd's model catalog is dynamic. Always call GET /v1/models to discover available models with their capabilities, context windows, and supported endpoints."
+description: "Discover available models at runtime with GET /v1/models. Check capabilities, context windows, tiers, and endpoints before every inference call."
 ---
 
 Piramyd's model catalog changes as new models are added and updated. Never hardcode a model ID in your application — always call `GET /v1/models` at runtime to discover what is available, inspect capabilities, and select the right model for your workload. This ensures your integration stays current without any code changes on your end.
@@ -34,7 +34,9 @@ Authorization: Bearer sk-YOUR_KEY
       "input_modalities": ["text", "image"],
       "output_modalities": ["text"],
       "context_length": 200000,
+      "context_window": 200000,
       "max_output_tokens": 16384,
+      "max_completion_tokens": 16384,
       "supports_tools": true,
       "supports_vision": true,
       "supports_reasoning": false,
@@ -97,11 +99,19 @@ Authorization: Bearer sk-YOUR_KEY
 </ResponseField>
 
 <ResponseField name="context_length" type="integer">
-  Maximum number of input tokens the model accepts in a single request. Keep your prompt plus conversation history within this limit.
+  Maximum number of input tokens the model accepts in a single request. Keep your prompt plus conversation history within this limit. Aliased as `context_window` — both fields are present and equal.
+</ResponseField>
+
+<ResponseField name="context_window" type="integer">
+  Alias for `context_length`. Both fields are returned and always equal.
 </ResponseField>
 
 <ResponseField name="max_output_tokens" type="integer">
-  Maximum tokens the model can generate in a single response. Use this to set a sensible upper bound for your `max_tokens` parameter.
+  Maximum tokens the model can generate in a single response. Use this to set a sensible upper bound for your `max_tokens` parameter. Aliased as `max_completion_tokens`.
+</ResponseField>
+
+<ResponseField name="max_completion_tokens" type="integer">
+  Alias for `max_output_tokens`, matching the OpenAI newer request parameter naming. Both fields are returned and always equal.
 </ResponseField>
 
 <ResponseField name="supports_tools" type="boolean">
@@ -162,6 +172,39 @@ Returns an overview of which model tiers are available for your current subscrip
 GET /v1/tiers
 Authorization: Bearer sk-YOUR_KEY
 ```
+
+---
+
+## GET /v1/capabilities
+
+Returns an API-level compatibility matrix for your integration. Use this to confirm which features are supported before relying on them in your application.
+
+```http
+GET /v1/capabilities
+Authorization: Bearer sk-YOUR_KEY
+```
+
+**Example response**
+
+```json
+{
+  "service": "piramyd-api",
+  "api_version": "v1",
+  "compatibility": {
+    "chat_completions": true,
+    "responses_compat": true,
+    "responses_native_events": true,
+    "legacy_completions": true,
+    "moderations": false,
+    "streaming_sse": true,
+    "stream_include_usage": true,
+    "max_completion_tokens": true,
+    "request_id_header": true
+  }
+}
+```
+
+Note that `moderations` is `false` — the `/v1/moderations` endpoint is present for SDK compatibility but returns `501 not_implemented` and should not be used for safety filtering.
 
 ---
 

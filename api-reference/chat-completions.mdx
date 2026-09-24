@@ -1,7 +1,7 @@
 ---
-title: "POST /v1/chat/completions — Chat Completions API"
+title: "Piramyd Chat Completions — POST /v1/chat/completions"
 sidebarTitle: "Chat Completions"
-description: "POST /v1/chat/completions — the primary OpenAI-compatible inference endpoint. Supports streaming, tool calling, vision, and all OpenAI-compatible parameters."
+description: "Primary OpenAI-compatible inference endpoint. Supports streaming, tool calling, vision, thread-based context compaction, and all standard parameters."
 ---
 
 The Chat Completions endpoint is the primary way to run inference on Piramyd. It is fully OpenAI-compatible — any code that already calls `POST /v1/chat/completions` against OpenAI's API will work against Piramyd with only a `base_url` change. The endpoint supports multi-turn conversations, tool/function calling, vision inputs, streaming via Server-Sent Events, and automatic context compaction for long threads.
@@ -86,6 +86,18 @@ POST https://api.piramyd.cloud/v1/chat/completions
 
 <ParamField body="user" type="string">
   An opaque string representing the end-user making the request. Used for abuse tracking and is passed through to upstream providers that support it.
+</ParamField>
+
+<ParamField body="logprobs" type="boolean">
+  Return log probabilities of output tokens. Accepted and passed through to upstream providers that support it; silently ignored by those that do not.
+</ParamField>
+
+<ParamField body="top_logprobs" type="integer">
+  Number of top log-probability tokens to return per position. Requires `logprobs: true`. Accepted and passed through where supported.
+</ParamField>
+
+<ParamField body="store" type="boolean">
+  Passed through to upstream providers that support conversation storage. Has no effect on Piramyd's own context compaction logic — use `thread_id` for that.
 </ParamField>
 
 ---

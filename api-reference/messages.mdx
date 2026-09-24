@@ -1,7 +1,7 @@
 ---
-title: "POST /v1/messages — Anthropic Messages Endpoint"
+title: "Messages API — POST /v1/messages | Anthropic Format"
 sidebarTitle: "Messages"
-description: "POST /v1/messages — Anthropic-compatible messages format. Accepts x-api-key header in addition to Bearer authorization. Full request and response reference."
+description: "Anthropic-compatible endpoint. Accepts x-api-key or Bearer auth, top-level system field, returns Anthropic-shaped responses. Drop-in for the Anthropic SDK."
 ---
 
 The Messages endpoint lets you point codebases that use the Anthropic SDK directly at Piramyd without changing your message structure. It accepts the Anthropic request format — including the top-level `system` field and Anthropic-style message objects — and returns a response shaped to the Anthropic specification. This means you can run Claude models (and any other Piramyd-hosted model) through your existing Anthropic SDK integration by changing only the `base_url`.

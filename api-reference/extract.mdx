@@ -1,7 +1,7 @@
 ---
-title: "POST /v1/extract — LLM Structured Data Extraction"
+title: "Extract Structured Data with LLMs — POST /v1/extract"
 sidebarTitle: "Extract"
-description: "POST /v1/extract — use an LLM to extract structured data from up to 20 URLs. Describe what to extract in natural language and optionally enforce output shape with JSON Schema."
+description: "POST /v1/extract — use an LLM to pull structured data from up to 20 URLs. Describe what to extract in plain English; enforce shape with JSON Schema."
 ---
 
 `POST /v1/extract` fetches up to 20 URLs, passes their content to an LLM, and returns structured data matching your description. Tell the extraction model what you want in plain English via `prompt`, and optionally provide a `schema` (JSON Schema) to enforce the exact shape of the output. This eliminates the need to manually scrape pages, parse HTML, and write custom extraction logic — the LLM handles it. For large or complex extractions, the endpoint may return immediately with `status: "processing"` and a `job_id` to poll.

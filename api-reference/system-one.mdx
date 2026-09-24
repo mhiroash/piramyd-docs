@@ -1,7 +1,7 @@
 ---
-title: "POST /v1/systemone — System One Decision API"
+title: "System One Calibrated Decisions — POST /v1/systemone"
 sidebarTitle: "System One"
-description: "POST /v1/systemone — typed decision endpoint for Jev models. Accepts a state and typed questions, returns calibrated probabilities and choices in 70–500 ms."
+description: "Typed decision API for Jev models. Submit a state and structured questions; receive calibrated probabilities, choices, and scores in 70–500 ms."
 ---
 
 System One is a typed decision API designed for fast, calibrated inference. Instead of generating free-form text, Jev models take a `state` — the context to reason about — and a map of structured `questions`, then return a precise answer for each one: a probability for yes/no questions, a ranked choice with confidence for classification tasks, and a continuous score with a legend for rubric-based evaluation. Responses arrive in 70–500 ms, making System One suitable for real-time routing, triage, scoring, and moderation pipelines. An existing TypeSafe client only needs its base URL changed to `https://api.piramyd.cloud/v1` — the request and response shapes are identical.
@@ -295,6 +295,19 @@ Returns the list of available System One model IDs that can be used in `POST /v1
   System One model IDs do **not** appear in `GET /v1/models`. Always use `GET /v1/systemone/models` to discover valid Jev model IDs.
 </Warning>
 
+**Example response**
+
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "jev-latest",   "type": "systemone" },
+    { "id": "jev-1.13.0",  "type": "systemone" },
+    { "id": "jev-1.12.0",  "type": "systemone" }
+  ]
+}
+```
+
 ---
 
 ## Limits and Errors
@@ -314,10 +327,14 @@ If your request exceeds either limit, the API returns `413 context_too_large`. T
 |--------|------|---------|--------|
 | `413` | `context_too_large` | Request exceeds token limits | Shrink `state` |
 | `422` | — | Invalid question definition | Fix the malformed question |
-| `404` | `model_not_found` | Model ID not found | Use `GET /v1/systemone/models` |
+| `404` | `model_not_found` | Model ID not found or not accessible on your tier | Use `GET /v1/systemone/models`; see note below |
 | `403` | — | Tier restriction | Upgrade your plan |
 | `429` | — | Rate limit exceeded | Retry with exponential backoff; respect `Retry-After` |
 | `503` | — | Provider unavailable | Retry after a delay |
+
+<Warning>
+  When a System One model ID is not found, the API returns `404 model_not_found` and **never silently substitutes a different model**. Substituting would shift your calibrated probability distributions and break any decision thresholds you have tuned. Always verify the model ID with `GET /v1/systemone/models` before deploying a pipeline.
+</Warning>
 
 ### Feature Restrictions
 

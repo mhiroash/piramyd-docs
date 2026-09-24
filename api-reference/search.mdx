@@ -1,10 +1,10 @@
 ---
-title: "POST /v1/search — Multi-Engine Web Search (SIRS)"
+title: "Multi-Engine Web Search via POST /v1/search — SIRS"
 sidebarTitle: "Search"
 description: "POST /v1/search — multi-engine web search via SIRS (SearXNG). Returns ranked results with snippets, sources, score, and optional full page content."
 ---
 
-SIRS is Piramyd's self-hosted multi-engine search service, powered by SearXNG at `search.piramyd.cloud`. Submit a natural-language or keyword query and receive ranked results with titles, snippets, source engines, relevance scores, and publication dates. Set `include_content: true` to concurrently scrape each result via CROWD, attaching full page markdown directly to each result object — useful when you want enriched context without a separate scrape call.
+SIRS is Piramyd's self-hosted multi-engine search service, powered by SearXNG. Submit a natural-language or keyword query and receive ranked results with titles, snippets, source engines, relevance scores, and publication dates. Set `include_content: true` to concurrently scrape each result via CROWD, attaching full page markdown directly to each result object — useful when you want enriched context without a separate scrape call.
 
 <Tip>
   When you need full page content alongside search results, prefer **`POST /v1/crowd/search`** — it uses Firecrawl's native search-and-scrape pipeline in a single optimized call, rather than performing parallel scrapes after the fact.

@@ -1,7 +1,7 @@
 ---
-title: "Use Piramyd as a Drop-In OpenAI SDK Replacement"
+title: "OpenAI SDK Compatibility Guide for Piramyd Gateway"
 sidebarTitle: "OpenAI Compatibility"
-description: "Piramyd is fully OpenAI-compatible. Change base_url to https://api.piramyd.cloud/v1 in your existing OpenAI SDK code and it works immediately."
+description: "Piramyd is fully OpenAI-compatible. Point base_url at https://api.piramyd.cloud/v1 and your existing Python or JS SDK code works immediately."
 ---
 
 Piramyd implements the OpenAI REST API specification, which means any code you've already written against the OpenAI Python or JavaScript SDK works against Piramyd without modification — you only need to point the client at a different base URL and swap in your Piramyd API key. You gain access to models from multiple upstream providers (Anthropic, OpenAI, and others) through a single, familiar interface.
@@ -51,7 +51,9 @@ Piramyd supports the following OpenAI-compatible endpoints and features:
 | `POST /v1/chat/completions` | Full compatibility — messages, tools, vision, streaming, all standard parameters |
 | `POST /v1/completions` | Legacy completions endpoint (`prompt` string, not `messages`) |
 | `POST /v1/moderations` | Present for SDK compatibility only — currently returns `501 not_implemented`. **Do not rely on this endpoint for safety filtering.** |
-| `GET /v1/models` | Full model catalog with capability metadata |
+| `GET /v1/models` | Full model catalog with capability metadata per model |
+| `GET /v1/capabilities` | API-level compatibility matrix (e.g. `streaming_sse`, `stream_include_usage`) |
+| `GET /v1/tiers` | Tier and model availability overview |
 
 In addition to the endpoints above, the following features are fully supported:
 

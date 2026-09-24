@@ -1,7 +1,7 @@
 ---
-title: "Function and Tool Calling with Piramyd"
+title: "Tool and Function Calling Guide for the Piramyd API"
 sidebarTitle: "Tool Calling"
-description: "Use tool calling with Piramyd to build AI agents that can invoke functions. Piramyd automatically ensures complete, valid JSON arguments even during streaming."
+description: "Use tool calling on Piramyd to build AI agents that invoke functions. Covers the 4-step loop, tool_choice values, streaming accumulation, and auto-repair."
 ---
 
 Tool calling lets you describe functions to the model and have it decide when and how to invoke them. Instead of generating free-form text, the model emits a structured `tool_calls` object with the function name and arguments it wants to call. Your code executes the function, then submits the result back so the model can continue. This pattern is the foundation of most AI agents.
